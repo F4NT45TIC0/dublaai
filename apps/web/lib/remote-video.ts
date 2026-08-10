@@ -96,7 +96,7 @@ export async function downloadRemoteVideo(
 
     const declaredLength = Number(response.headers.get('content-length') ?? 0)
     if (Number.isFinite(declaredLength) && declaredLength > MAX_VIDEO_BYTES) {
-      throw new Error('O vídeo da URL ultrapassa o limite de 250 MB.')
+      throw new Error('O vídeo da URL ultrapassa o limite de 1 GB.')
     }
 
     const chunks: ArrayBuffer[] = []
@@ -104,7 +104,7 @@ export async function downloadRemoteVideo(
     if (!response.body) {
       const buffer = await response.arrayBuffer()
       if (buffer.byteLength > MAX_VIDEO_BYTES) {
-        throw new Error('O vídeo da URL ultrapassa o limite de 250 MB.')
+        throw new Error('O vídeo da URL ultrapassa o limite de 1 GB.')
       }
       chunks.push(buffer)
       received = buffer.byteLength
@@ -116,7 +116,7 @@ export async function downloadRemoteVideo(
         received += part.value.byteLength
         if (received > MAX_VIDEO_BYTES) {
           await reader.cancel()
-          throw new Error('O vídeo da URL ultrapassa o limite de 250 MB.')
+          throw new Error('O vídeo da URL ultrapassa o limite de 1 GB.')
         }
         chunks.push(
           part.value.buffer.slice(

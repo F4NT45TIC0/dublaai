@@ -18,9 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "pnpm test:e2e:fixtures && pnpm --filter @dubla/web build && tsx scripts/run-e2e.ts",
-    "content:build": "tsx scripts/generate-mock-scenes.ts",
-    "content:verify": "tsx scripts/verify-scenes.ts",
-    "check:leaks": "pnpm test:e2e:fixtures && pnpm --filter @dubla/web build && tsx scripts/run-e2e.ts tests/e2e/leaks.spec.ts",
+    "check:leaks": "pnpm test:e2e:fixtures && pnpm --filter @dubla/web exec next build && playwright test tests/e2e/upload-flow.spec.ts",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "test:e2e:fixtures": "tsx scripts/build-e2e-fixtures.ts"
   },

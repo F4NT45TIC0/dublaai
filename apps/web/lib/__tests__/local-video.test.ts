@@ -7,16 +7,16 @@ import {
 } from '../local-video'
 
 describe('validação do vídeo local', () => {
-  it('aceita exatamente 60 segundos', () => {
+  it('aceita exatamente 5 minutos', () => {
     expect(
-      validateLocalVideoMetadata({ durationMs: 60_000, width: 1_920, height: 1_080 }),
+      validateLocalVideoMetadata({ durationMs: 300_000, width: 1_920, height: 1_080 }),
     ).toBeNull()
   })
 
-  it('recusa qualquer duração acima de 60 segundos', () => {
+  it('recusa qualquer duração acima de 5 minutos', () => {
     expect(
-      validateLocalVideoMetadata({ durationMs: 60_001, width: 1_920, height: 1_080 }),
-    ).toBe('O vídeo precisa ter no máximo 1 minuto.')
+      validateLocalVideoMetadata({ durationMs: 300_001, width: 1_920, height: 1_080 }),
+    ).toBe('O vídeo precisa ter no máximo 5 minutos.')
   })
 
   it('recusa arquivo vazio e conteúdo declarado como não-vídeo', () => {
@@ -29,8 +29,8 @@ describe('validação do vídeo local', () => {
   })
 
   it('recusa arquivo acima do limite de memória do navegador', () => {
-    expect(validateLocalVideoFile({ size: 250 * 1024 * 1024 + 1, type: 'video/mp4' })).toBe(
-      'O vídeo precisa ter no máximo 250 MB.',
+    expect(validateLocalVideoFile({ size: 1024 * 1024 * 1024 + 1, type: 'video/mp4' })).toBe(
+      'O vídeo precisa ter no máximo 1 GB.',
     )
   })
 

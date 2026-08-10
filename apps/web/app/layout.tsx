@@ -67,12 +67,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               >
                 Meu vídeo
               </Link>
-              <Link
-                href="/explorar"
-                className="border-2 border-ink px-3 py-1.5 font-display text-xs uppercase tracking-widest hover:bg-ink hover:text-paper sm:text-sm"
-              >
-                Explorar
-              </Link>
             </nav>
           </div>
         </header>
@@ -84,8 +78,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <footer className="border-t-2 border-ink">
           <div className="mx-auto w-full max-w-[100rem] px-4 py-6 text-xs sm:px-8">
             <p className="max-w-prose opacity-70">
-              Todas as cenas do Dubla Aí são conteúdo autoral, escrito e produzido para esta
-              plataforma. Sua voz fica no seu aparelho — nada é enviado.
+              Seu vídeo e sua voz ficam no seu aparelho — o Dubla Aí não envia nada para servidor
+              nenhum. Use apenas material que você tenha o direito de usar.
             </p>
           </div>
         </footer>

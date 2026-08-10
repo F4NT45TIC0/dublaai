@@ -14,7 +14,9 @@ const contentSecurityPolicy = [
   // Next injeta scripts inline com nonce em produção; em dev o HMR exige eval.
   process.env.NODE_ENV === 'development'
     ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-    : "script-src 'self' 'unsafe-inline'",
+    : // 'wasm-unsafe-eval' libera APENAS WebAssembly.compile/instantiate —
+      // não é o eval de JS. Necessário para a transcrição local (onnxruntime).
+      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",

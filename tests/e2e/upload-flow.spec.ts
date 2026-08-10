@@ -176,6 +176,69 @@ test.describe('arquivo ou URL de vídeo', () => {
     await expect(page.getByTestId('stitched-playback')).toContainText('1 fala montada')
   })
 
+  test('o botão de próxima fala avança sem obrigar a rolar a página', async ({ page }) => {
+    await page.goto('/enviar')
+    await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
+    await expect(
+      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
+    ).toBeVisible({ timeout: 60_000 })
+
+    await page.getByTestId('local-take-mode-segment').click()
+    await expect(page.getByTestId('local-start-dub')).toContainText('trecho 1')
+
+    await page.getByTestId('local-start-dub').click()
+    await waitForLocalState(page, 'preview', 40_000)
+
+    // O ciclo gravar → seguir acontece no mesmo lugar da tela.
+    await page.getByTestId('local-next-segment').click()
+    await waitForLocalState(page, 'idle')
+    await expect(page.getByTestId('local-start-dub')).toContainText('trecho 2')
+  })
+
+  test('nenhum microfone continua ativo depois de sair da página (§111.14)', async ({ page }) => {
+    await page.addInitScript(() => {
+      const registry: MediaStreamTrack[] = []
+      ;(window as { __dublaTracks?: MediaStreamTrack[] }).__dublaTracks = registry
+      const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+      navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints) => {
+        const stream = await original(constraints)
+        registry.push(...stream.getTracks())
+        return stream
+      }
+    })
+
+    await page.goto('/enviar')
+    await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
+    await expect(
+      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
+    ).toBeVisible({ timeout: 60_000 })
+
+    await page.getByTestId('local-start-dub').click()
+    await waitForLocalState(page, 'recording', 40_000)
+    await page.waitForTimeout(2_000)
+    await page.getByTestId('local-stop-dub').click()
+    await waitForLocalState(page, 'preview', 40_000)
+
+    const liveDuring = await page.evaluate(
+      () =>
+        ((window as { __dublaTracks?: MediaStreamTrack[] }).__dublaTracks ?? []).filter(
+          (track) => track.readyState === 'live',
+        ).length,
+    )
+    expect(liveDuring).toBeGreaterThan(0)
+
+    // Sair da página desmonta a árvore e dispara a limpeza do §67.
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: /Dubla/ })).toBeVisible()
+    const liveAfter = await page.evaluate(
+      () =>
+        ((window as { __dublaTracks?: MediaStreamTrack[] }).__dublaTracks ?? []).filter(
+          (track) => track.readyState === 'live',
+        ).length,
+    )
+    expect(liveAfter).toBe(0)
+  })
+
   test('vídeo sem áudio continua disponível sem inventar pontuação', async ({ page }) => {
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(NO_AUDIO_VIDEO)

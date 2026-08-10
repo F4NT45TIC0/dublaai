@@ -226,7 +226,7 @@ export function LocalVideoDubber() {
             Selecione uma cena do computador. O arquivo não é enviado para servidor.
           </span>
           <span className="font-display text-xs uppercase tracking-[0.18em] opacity-60">
-            MP4 · WebM · MOV · até 60 s e 250 MB
+            MP4 · WebM · MOV · até 5 min e 1 GB
           </span>
         </label>
 
@@ -417,6 +417,39 @@ function LocalDubStage({
     [activeSegment, selected.durationMs],
   )
 
+  /**
+   * Avança para a próxima fala sem obrigar a rolar a página.
+   *
+   * Dublar trecho a trecho é um ciclo curto e repetitivo: gravar, ouvir,
+   * seguir. Se a única forma de trocar de fala for subir até a lista, o modo
+   * fala-a-fala fica cansativo justamente onde deveria ser ágil.
+   */
+  const goToSegment = useCallback(
+    (index: number) => {
+      setActiveSegmentIndex(index)
+      recorderResetRef.current?.()
+    },
+    [],
+  )
+  const recorderResetRef = useRef<(() => void) | null>(null)
+
+  const nextPendingSegmentIndex = useCallback(
+    (fromIndex: number, recorded: Record<string, unknown>) => {
+      // Primeiro procura adiante; depois volta ao começo, para fechar as que
+      // ficaram para trás sem obrigar a pessoa a caçá-las na lista.
+      for (let index = fromIndex + 1; index < orderedSegments.length; index += 1) {
+        const segment = orderedSegments[index]
+        if (segment && recorded[segment.id] === undefined) return index
+      }
+      for (let index = 0; index <= fromIndex; index += 1) {
+        const segment = orderedSegments[index]
+        if (segment && recorded[segment.id] === undefined) return index
+      }
+      return -1
+    },
+    [orderedSegments],
+  )
+
   /** Legendas sincronizadas: só os trechos em que a pessoa digitou o texto. */
   const subtitles = useMemo<SubtitleSegment[]>(
     () =>
@@ -520,6 +553,15 @@ function LocalDubStage({
 
   const scoreBySegment = useMemo(() => bestScoreBySegment(recorder.attempts), [recorder.attempts])
   const takesBySegment = useMemo(() => takeStatesBySegment(recorder.attempts), [recorder.attempts])
+
+  // O navegador de falas precisa reiniciar a máquina, mas ele é declarado
+  // antes do recorder existir; o ref costura os dois sem inverter a ordem.
+  const sendRecorder = recorder.send
+  useEffect(() => {
+    recorderResetRef.current = () => {
+      sendRecorder({ type: 'RESET' })
+    }
+  }, [sendRecorder])
 
   const liveWaveformActive =
     state.matches('preparing') || state.matches('countdown') || state.matches('recording')
@@ -766,10 +808,7 @@ function LocalDubStage({
             characters={characters}
             activeIndex={activeSegmentIndex}
             takes={takesBySegment}
-            onSelect={(index) => {
-              setActiveSegmentIndex(index)
-              recorder.send({ type: 'RESET' })
-            }}
+            onSelect={goToSegment}
           />
         ) : null}
 
@@ -886,6 +925,22 @@ function LocalDubStage({
               sourceFileName={selected.fileName}
               onExportingChange={setExportingVideo}
             />
+            {takeMode === 'segment' && activeSegment ? (
+              <Button
+                size="lg"
+                disabled={exportingVideo}
+                data-testid="local-next-segment"
+                onClick={() => {
+                  const next = nextPendingSegmentIndex(activeSegmentIndex, takesBySegment)
+                  goToSegment(next === -1 ? Math.min(activeSegmentIndex + 1, orderedSegments.length - 1) : next)
+                }}
+              >
+                {nextPendingSegmentIndex(activeSegmentIndex, takesBySegment) === -1
+                  ? 'Todas as falas gravadas'
+                  : 'Próxima fala ▶'}
+              </Button>
+            ) : null}
+
             {takeMode === 'duet' ? (
               // No dueto o turno já avançou; regravar aqui pegaria a fala do
               // OUTRO jogador. A troca de mãos é explícita.
