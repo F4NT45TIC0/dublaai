@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises'
 import { NextResponse } from 'next/server'
 import { normalizeMatchCode } from '@/lib/match-code'
-import { localAudioAllowed, localAudioPath } from '@/lib/server/match-store'
+import { matchStore, MatchStoreUnavailable } from '@/lib/server/match-store'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,31 +9,48 @@ interface Context {
 }
 
 /**
- * Serve o WAV de uma tomada guardada em disco.
+ * Serve o WAV de uma tomada da partida.
  *
- * Existe apenas para o desenvolvimento: em produção quem guarda é o Blob e ele
- * já entrega a própria URL. Fora do `next dev` esta rota responde 404 em vez de
- * expor o sistema de arquivos do servidor.
+ * O áudio sai daqui, e não de uma URL do armazenamento, de propósito: no Blob
+ * o store é privado, então o arquivo só é legível por quem tem o token — que
+ * mora no servidor e nunca no navegador. Quem quiser ouvir precisa do código da
+ * partida, e o código tem 60 bits.
  */
 export async function GET(_request: Request, context: Context): Promise<Response> {
-  if (!localAudioAllowed()) {
-    return NextResponse.json({ error: 'Indisponível.' }, { status: 404 })
-  }
-
   const { codigo, trecho } = await context.params
   const code = normalizeMatchCode(codigo)
-  // O trecho vira caminho: só aceitamos o alfabeto que nós mesmos geramos, sem
-  // ponto nem barra, para que "../" não saia da pasta da partida.
+  // O trecho vira caminho no armazenamento: só passa o alfabeto que nós mesmos
+  // geramos, sem ponto nem barra, para que "../" não saia da pasta da partida.
   if (!code || !/^[a-zA-Z0-9_-]+$/.test(trecho)) {
     return NextResponse.json({ error: 'Não encontrado.' }, { status: 404 })
   }
 
+  let store
   try {
-    const bytes = await readFile(localAudioPath(code, trecho))
-    return new Response(new Uint8Array(bytes), {
-      headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store' },
-    })
-  } catch {
+    store = matchStore()
+  } catch (cause) {
+    if (cause instanceof MatchStoreUnavailable) {
+      return NextResponse.json({ error: cause.message }, { status: 503 })
+    }
+    throw cause
+  }
+
+  // A partida precisa existir e conhecer o trecho. Sem esta conferência, a
+  // rota viraria um leitor genérico do armazenamento.
+  const state = await store.read(code)
+  if (!state?.segments.some((segment) => segment.id.replace(/[^a-zA-Z0-9_-]/g, '') === trecho)) {
     return NextResponse.json({ error: 'Não encontrado.' }, { status: 404 })
   }
+
+  const bytes = await store.readAudio(code, trecho)
+  if (!bytes) return NextResponse.json({ error: 'Não encontrado.' }, { status: 404 })
+
+  return new Response(bytes, {
+    headers: {
+      'Content-Type': 'audio/wav',
+      // A tomada é imutável (regravar exige outro trecho), mas é voz de alguém:
+      // fica no cache do navegador, nunca em cache compartilhado.
+      'Cache-Control': 'private, max-age=3600',
+    },
+  })
 }

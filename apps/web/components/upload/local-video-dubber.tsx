@@ -2,12 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMediaClock } from '@dubla/audio'
-import { formatTimecode, type Character, type SubtitleSegment } from '@dubla/shared'
+import {
+  formatTimecode,
+  type Character,
+  type SpeakerSegment,
+  type SubtitleSegment,
+} from '@dubla/shared'
 import { Button, ErrorState, ScoreCard, Tag } from '@dubla/ui'
 import { AttemptPlayback } from '@/components/dub/attempt-playback'
 import { Countdown } from '@/components/dub/countdown'
 import { DuetSetup, DuetSummary, DuetTurn } from '@/components/dub/duet-panel'
 import { LevelMeter } from '@/components/dub/level-meter'
+import { SegmentHud, type SegmentPhase } from '@/components/dub/segment-hud'
 import { SegmentNavigator } from '@/components/dub/segment-navigator'
 import { StitchedPlayback } from '@/components/dub/stitched-playback'
 import { SubtitleRenderer } from '@/components/scene/subtitle-renderer'
@@ -336,6 +342,17 @@ function LocalDubStage({
   const unavailableReason =
     selected.reference.status === 'unavailable' ? selected.reference.reason : null
 
+  /**
+   * Pontes entre partes da tela que nascem em ordens diferentes.
+   *
+   * A barra fixa e os atalhos de teclado são montados antes de o gravador e a
+   * lista de tomadas existirem. Guardar as versões atuais em refs evita tanto
+   * inverter a ordem do componente quanto remontar o `keydown` a cada tomada.
+   */
+  const segmentsRef = useRef<readonly SpeakerSegment[]>([])
+  const takesBySegmentRef = useRef<Record<string, unknown>>({})
+  const goToNextPendingRef = useRef<(() => void) | null>(null)
+
   const [takeMode, setTakeMode] = useState<TakeMode>('full')
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0)
   const [duet, setDuet] = useState<DuetSession | null>(null)
@@ -582,6 +599,10 @@ function LocalDubStage({
     (index: number) => {
       setActiveSegmentIndex(index)
       recorderResetRef.current?.()
+      // Levar o vídeo até a fala é metade da explicação: a pessoa lê o texto na
+      // barra e vê o quadro em que aquilo é dito, antes de apertar gravar.
+      const segment = segmentsRef.current[index]
+      if (segment) playerRef.current?.seekMs(Math.max(0, segment.startMs - 400))
     },
     [],
   )
@@ -607,6 +628,31 @@ function LocalDubStage({
     },
     [orderedSegments, sources],
   )
+
+  segmentsRef.current = orderedSegments
+
+  /** Vai para a próxima fala pendente; se não houver, para na seguinte. */
+  const goToNextPending = useCallback(() => {
+    const next = nextPendingSegmentIndex(activeSegmentIndex, takesBySegmentRef.current)
+    goToSegment(
+      next === -1 ? Math.min(activeSegmentIndex + 1, orderedSegments.length - 1) : next,
+    )
+  }, [activeSegmentIndex, goToSegment, nextPendingSegmentIndex, orderedSegments.length])
+
+  /**
+   * Marca a fala como original e já emenda na próxima.
+   *
+   * Quem escolhe não dublar um trecho quer seguir, não ficar parado nele —
+   * então a troca e o avanço são o mesmo gesto. Desmarcar não avança: aí a
+   * pessoa mudou de ideia e vai gravar ali mesmo.
+   */
+  const useOriginalAndAdvance = useCallback(() => {
+    const segment = orderedSegments[activeSegmentIndex]
+    if (!segment) return
+    const passandoAOriginal = !isOriginal(sources, segment.id)
+    toggleSource(segment.id)
+    if (passandoAOriginal) goToNextPending()
+  }, [activeSegmentIndex, goToNextPending, orderedSegments, sources, toggleSource])
 
   /** Legendas sincronizadas: só os trechos em que a pessoa digitou o texto. */
   const subtitles = useMemo<SubtitleSegment[]>(
@@ -711,6 +757,59 @@ function LocalDubStage({
 
   const scoreBySegment = useMemo(() => bestScoreBySegment(recorder.attempts), [recorder.attempts])
   const takesBySegment = useMemo(() => takeStatesBySegment(recorder.attempts), [recorder.attempts])
+  takesBySegmentRef.current = takesBySegment
+  // O atalho de teclado é montado antes desta função existir; o ref costura os
+  // dois sem obrigar o efeito a se remontar a cada tomada nova.
+  goToNextPendingRef.current = goToNextPending
+
+  /** Fase da barra fixa, traduzida da máquina de gravação. */
+  const hudPhase: SegmentPhase = state.matches('recording')
+    ? 'recording'
+    : state.matches('countdown')
+      ? 'countdown'
+      : state.matches('preview')
+        ? 'preview'
+        : state.matches('idle')
+          ? 'idle'
+          : 'busy'
+
+  /**
+   * Espaço grava, Esc cancela.
+   *
+   * O ciclo do fala-a-fala é feito de dezenas de repetições; tirar a mão do
+   * teclado a cada volta é o que torna o modo cansativo. O atalho é ignorado
+   * enquanto a pessoa escreve numa fala — ali o espaço é espaço.
+   */
+  useEffect(() => {
+    if (takeMode !== 'segment') return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      const editing =
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      if (editing || event.metaKey || event.ctrlKey || event.altKey) return
+
+      if (event.code === 'Space') {
+        event.preventDefault()
+        if (state.matches('idle')) void recorder.requestDub()
+        else if (state.matches('recording')) recorder.stop()
+        else if (state.matches('preview')) goToNextPendingRef.current?.()
+        return
+      }
+      if (event.key === 'Escape' && (state.matches('countdown') || state.matches('recording'))) {
+        event.preventDefault()
+        recorder.cancel()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [takeMode, state, recorder])
 
   // O navegador de falas precisa reiniciar a máquina, mas ele é declarado
   // antes do recorder existir; o ref costura os dois sem inverter a ordem.
@@ -761,6 +860,26 @@ function LocalDubStage({
           </Tag>
         </div>
       </div>
+
+      {takeMode === 'segment' && activeSegment && recorder.supported ? (
+        <SegmentHud
+          segment={activeSegment}
+          index={activeSegmentIndex}
+          total={orderedSegments.length}
+          text={texts[activeSegment.id]?.trim() ? (texts[activeSegment.id] ?? null) : null}
+          phase={hudPhase}
+          countdown={state.context.countdown}
+          isOriginal={isOriginal(sources, activeSegment.id)}
+          allDone={nextPendingSegmentIndex(activeSegmentIndex, takesBySegment) === -1}
+          disabled={exportingVideo}
+          onRecord={() => {
+            void recorder.requestDub()
+          }}
+          onStop={recorder.stop}
+          onNext={goToNextPending}
+          onToggleOriginal={useOriginalAndAdvance}
+        />
+      ) : null}
 
       <VideoPlayer
         ref={attachVideo}

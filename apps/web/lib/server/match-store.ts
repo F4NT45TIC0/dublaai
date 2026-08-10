@@ -18,6 +18,8 @@ export interface MatchStore {
   write(state: MatchState): Promise<void>
   /** Guarda o WAV da tomada e devolve a URL de onde ele pode ser ouvido. */
   putAudio(code: string, segmentId: string, bytes: ArrayBuffer): Promise<string>
+  /** Devolve o WAV guardado, ou `null` se ele não existe. */
+  readAudio(code: string, segmentId: string): Promise<ArrayBuffer | null>
 }
 
 export class MatchStoreUnavailable extends Error {
@@ -32,16 +34,55 @@ export class MatchStoreUnavailable extends Error {
 
 /* ------------------------------------------------------------------ Blob */
 
+/**
+ * Um store do Blob é público OU privado, e o `put` recusa o modo errado.
+ *
+ * Preferimos privado: são gravações de voz, e num store privado o arquivo
+ * responde 403 para quem tentar a URL direta — só o servidor, de posse do
+ * token, consegue lê-lo. Stores antigos são públicos, então o modo é
+ * descoberto na primeira escrita e lembrado daí em diante.
+ */
+let blobAccess: 'private' | 'public' | null = null
+
+function isWrongAccessError(cause: unknown): boolean {
+  return cause instanceof Error && /access on a (private|public) store/i.test(cause.message)
+}
+
+async function putWithDetectedAccess<T>(
+  write: (access: 'private' | 'public') => Promise<T>,
+): Promise<T> {
+  if (blobAccess) return await write(blobAccess)
+  try {
+    const result = await write('private')
+    blobAccess = 'private'
+    return result
+  } catch (cause) {
+    if (!isWrongAccessError(cause)) throw cause
+    const result = await write('public')
+    blobAccess = 'public'
+    return result
+  }
+}
+
+/** Lê um blob privado. Sem o token, a mesma URL responde 403. */
+async function fetchBlob(url: string): Promise<Response> {
+  return await fetch(url, {
+    cache: 'no-store',
+    headers: { Authorization: `Bearer ${process.env['BLOB_READ_WRITE_TOKEN'] ?? ''}` },
+  })
+}
+
 function blobStore(): MatchStore {
   const statePath = (code: string) => `partidas/${code}/estado.json`
+  const audioPath = (code: string, segmentId: string) => `partidas/${code}/${segmentId}.wav`
 
   return {
     async read(code) {
       const { head } = await import('@vercel/blob')
       try {
-        // `head` resolve o caminho para a URL pública sem baixar o conteúdo.
+        // `head` resolve o caminho para a URL do objeto sem baixar o conteúdo.
         const meta = await head(statePath(code))
-        const response = await fetch(meta.url, { cache: 'no-store' })
+        const response = await fetchBlob(meta.url)
         if (!response.ok) return null
         return (await response.json()) as MatchState
       } catch {
@@ -52,26 +93,46 @@ function blobStore(): MatchStore {
 
     async write(state) {
       const { put } = await import('@vercel/blob')
-      await put(statePath(state.code), JSON.stringify(state), {
-        access: 'public',
-        contentType: 'application/json',
-        // Sem isto o SDK acrescenta um sufixo aleatório e o próximo `read`
-        // não encontraria o estado que acabou de ser gravado.
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        cacheControlMaxAge: 0,
-      })
+      await putWithDetectedAccess(
+        async (access) =>
+          await put(statePath(state.code), JSON.stringify(state), {
+            access,
+            contentType: 'application/json',
+            // Sem isto o SDK acrescenta um sufixo aleatório e o próximo `read`
+            // não encontraria o estado que acabou de ser gravado.
+            addRandomSuffix: false,
+            allowOverwrite: true,
+            cacheControlMaxAge: 0,
+          }),
+      )
     },
 
     async putAudio(code, segmentId, bytes) {
       const { put } = await import('@vercel/blob')
-      const result = await put(`partidas/${code}/${segmentId}.wav`, bytes, {
-        access: 'public',
-        contentType: 'audio/wav',
-        addRandomSuffix: false,
-        allowOverwrite: true,
-      })
-      return result.url
+      await putWithDetectedAccess(
+        async (access) =>
+          await put(audioPath(code, segmentId), bytes, {
+            access,
+            contentType: 'audio/wav',
+            addRandomSuffix: false,
+            allowOverwrite: true,
+          }),
+      )
+      // A URL do Blob nunca chega ao navegador: o áudio sai pela rota da
+      // própria aplicação, que é o único lugar com o token para lê-lo.
+      return `/api/partidas/${code}/audio/${segmentId}`
+    },
+
+    async readAudio(code, segmentId) {
+      const { head } = await import('@vercel/blob')
+      try {
+        const meta = await head(audioPath(code, segmentId))
+        const response = await fetchBlob(meta.url)
+        if (!response.ok) return null
+        return await response.arrayBuffer()
+      } catch {
+        return null
+      }
     },
   }
 }
@@ -107,6 +168,15 @@ function fileStore(): MatchStore {
       await writeFile(join(dir(code), `${segmentId}.wav`), Buffer.from(bytes))
       return `/api/partidas/${code}/audio/${segmentId}`
     },
+
+    async readAudio(code, segmentId) {
+      try {
+        const bytes = await readFile(join(dir(code), `${segmentId}.wav`))
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      } catch {
+        return null
+      }
+    },
   }
 }
 
@@ -141,12 +211,4 @@ export function isOnlineAvailable(): boolean {
   return Boolean(process.env['BLOB_READ_WRITE_TOKEN']) || fileStoreAllowed()
 }
 
-/** Caminho do WAV no armazenamento em disco (usado só pela rota de áudio). */
-export function localAudioPath(code: string, segmentId: string): string {
-  return join(matchDirectory(), code, `${segmentId}.wav`)
-}
 
-/** A rota de áudio local só responde onde o disco é o armazenamento. */
-export function localAudioAllowed(): boolean {
-  return !process.env['BLOB_READ_WRITE_TOKEN'] && fileStoreAllowed()
-}

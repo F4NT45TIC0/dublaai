@@ -192,6 +192,40 @@ test.describe('arquivo ou URL de vídeo', () => {
     await expect(page.getByTestId('local-start-dub')).toContainText('trecho 2')
   })
 
+  test('a barra fixa mostra a fala, avança e grava pelo teclado', async ({ page }) => {
+    await page.goto('/enviar')
+    await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
+    await expect(
+      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
+    ).toBeVisible({ timeout: 60_000 })
+
+    await page.getByTestId('local-take-mode-segment').click()
+    await expect(page.getByTestId('segment-hud')).toBeVisible()
+
+    // O texto da fala aparece na barra: é o que a pessoa lê antes de gravar.
+    await page.locator('summary', { hasText: /Falas da cena/i }).click()
+    await page.getByTestId('local-fala-0').fill('Ao infinito e além')
+    await expect(page.getByTestId('segment-hud-fala')).toHaveText('Ao infinito e além')
+
+    // "Usar voz original" resolve o trecho e já emenda no seguinte, levando o
+    // vídeo junto para o quadro em que a próxima fala acontece.
+    await page.getByTestId('segment-hud-original').click()
+    await expect(page.getByTestId('segment-hud')).toContainText('Fala 2/8')
+    expect(await page.locator('video').first().evaluate((el: HTMLVideoElement) => el.currentTime))
+      .toBeGreaterThan(0)
+
+    // Espaço grava sem tirar a mão do teclado.
+    await page.locator('body').press('Space')
+    await waitForLocalState(page, 'preview', 40_000)
+    await expect(page.getByTestId('segment-hud-proxima')).toBeVisible()
+
+    // Dentro de um campo de texto, espaço é espaço.
+    await page.getByTestId('segment-hud-proxima').click()
+    await waitForLocalState(page, 'idle')
+    await page.getByTestId('local-fala-0').press('Space')
+    await expect(page.getByTestId('segment-hud-gravar')).toBeVisible()
+  })
+
   test('trechos com a voz original ficam de fora da gravação e entram na cena', async ({
     page,
   }) => {

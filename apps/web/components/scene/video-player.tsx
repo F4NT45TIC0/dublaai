@@ -323,7 +323,13 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
 
   return (
     <div className="relative w-full">
-      <div className="relative aspect-video w-full border-2 border-ink-line bg-black">
+      {/*
+        Teto de altura, não de largura: vídeo em pé dentro de uma caixa 16:9
+        larga vira uma faixa preta gigante que empurra tudo para fora da tela.
+        O `max-w` derivado de 62vh mantém a proporção e limita a altura sem
+        precisar saber o formato do arquivo antes de carregá-lo.
+      */}
+      <div className="relative mx-auto aspect-video w-full max-w-[calc(62vh*16/9)] border-2 border-ink-line bg-black">
         <video
           ref={videoRef}
           src={src}
