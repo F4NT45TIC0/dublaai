@@ -39,6 +39,7 @@ import {
 import { decodeVideoMonoAudio, prepareVideoReference } from '@/lib/prepare-video-reference'
 import { assignTranscript, untranscribedCount } from '@/lib/assign-transcript'
 import { transcribeReference } from '@/lib/transcribe-reference'
+import { isOriginal, type SegmentSource } from '@/lib/segment-sources'
 import type { VideoReference } from '@/lib/prepare-video-reference'
 import { downloadRemoteVideo, validateRemoteVideoUrl } from '@/lib/remote-video'
 import { DubbedVideoExport } from './dubbed-video-export'
@@ -384,6 +385,45 @@ function LocalDubStage({
     [selected.id],
   )
 
+  /**
+   * Trecho a trecho: gravar ou manter a voz original do vídeo.
+   *
+   * Deixar um personagem no original é o que permite entrar só na voz do outro
+   * — dublar um lado da conversa e responder a si mesmo. Guardado por vídeo,
+   * junto das falas, para sobreviver a recarregar a página.
+   */
+  const [sources, setSources] = useState<Record<string, SegmentSource>>(() => {
+    try {
+      const raw = localStorage.getItem(`dublaai:fontes:${selected.id}`)
+      return raw ? (JSON.parse(raw) as Record<string, SegmentSource>) : {}
+    } catch {
+      return {}
+    }
+  })
+  const toggleSource = useCallback(
+    (segmentId: string) => {
+      setSources((previous) => {
+        const next: Record<string, SegmentSource> = {
+          ...previous,
+          [segmentId]: previous[segmentId] === 'original' ? 'record' : 'original',
+        }
+        try {
+          localStorage.setItem(`dublaai:fontes:${selected.id}`, JSON.stringify(next))
+        } catch {
+          // Sem espaço para guardar não pode impedir de escolher.
+        }
+        return next
+      })
+    },
+    [selected.id],
+  )
+
+  /** Decodifica o áudio do vídeo sob demanda, para os trechos no original. */
+  const loadOriginalAudio = useCallback(async () => {
+    const video = await (await fetch(selected.url)).blob()
+    return await decodeVideoMonoAudio(video, selected.durationMs)
+  }, [selected.durationMs, selected.url])
+
   const [transcription, setTranscription] = useState<
     | { readonly phase: 'idle' }
     | { readonly phase: 'running'; readonly loadedRatio: number }
@@ -510,17 +550,21 @@ function LocalDubStage({
     (fromIndex: number, recorded: Record<string, unknown>) => {
       // Primeiro procura adiante; depois volta ao começo, para fechar as que
       // ficaram para trás sem obrigar a pessoa a caçá-las na lista.
-      for (let index = fromIndex + 1; index < orderedSegments.length; index += 1) {
+      const pending = (index: number) => {
         const segment = orderedSegments[index]
-        if (segment && recorded[segment.id] === undefined) return index
+        // Trecho no original já está resolvido: mandar gravar ali seria desfazer
+        // a escolha da pessoa.
+        return segment !== undefined && !isOriginal(sources, segment.id) && recorded[segment.id] === undefined
+      }
+      for (let index = fromIndex + 1; index < orderedSegments.length; index += 1) {
+        if (pending(index)) return index
       }
       for (let index = 0; index <= fromIndex; index += 1) {
-        const segment = orderedSegments[index]
-        if (segment && recorded[segment.id] === undefined) return index
+        if (pending(index)) return index
       }
       return -1
     },
-    [orderedSegments],
+    [orderedSegments, sources],
   )
 
   /** Legendas sincronizadas: só os trechos em que a pessoa digitou o texto. */
@@ -892,25 +936,58 @@ function LocalDubStage({
                   {transcription.message} Você ainda pode escrever as falas à mão.
                 </p>
               ) : null}
-              {orderedSegments.map((segment, index) => (
-                <label key={segment.id} className="flex flex-col gap-1">
-                  <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
-                    {index + 1}. {formatTimecode(segment.startMs)} –{' '}
-                    {formatTimecode(segment.endMs)}
-                  </span>
-                  <input
-                    type="text"
-                    maxLength={300}
-                    value={texts[segment.id] ?? ''}
-                    placeholder="O que é dito neste trecho?"
-                    data-testid={`local-fala-${String(index)}`}
-                    onChange={(event) => {
-                      updateText(segment.id, event.target.value)
-                    }}
-                    className="min-h-11 border-2 border-ink-line bg-ink-soft px-3 font-body text-sm text-paper placeholder:text-muted"
-                  />
-                </label>
-              ))}
+              {takeMode === 'segment' ? (
+                <p className="text-xs text-muted">
+                  Marque como <strong>voz original</strong> os trechos que você não quer dublar. Dá
+                  para gravar só um personagem e deixar o outro falando como no vídeo.
+                </p>
+              ) : null}
+
+              {orderedSegments.map((segment, index) => {
+                const usaOriginal = isOriginal(sources, segment.id)
+                return (
+                  <div key={segment.id} className="flex flex-col gap-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+                        {index + 1}. {formatTimecode(segment.startMs)} –{' '}
+                        {formatTimecode(segment.endMs)}
+                      </span>
+                      {takeMode === 'segment' ? (
+                        <button
+                          type="button"
+                          aria-pressed={usaOriginal}
+                          data-testid={`local-fonte-${String(index)}`}
+                          onClick={() => {
+                            toggleSource(segment.id)
+                          }}
+                          className={`border-2 px-2 py-1 font-display text-[0.625rem] uppercase tracking-widest ${
+                            usaOriginal
+                              ? 'border-accent bg-accent text-paper'
+                              : 'border-ink-line text-muted hover:border-paper hover:text-paper'
+                          }`}
+                        >
+                          {usaOriginal ? 'Voz original' : 'Vou dublar'}
+                        </button>
+                      ) : null}
+                    </div>
+                    <label className="sr-only" htmlFor={`fala-${segment.id}`}>
+                      Texto do trecho {index + 1}
+                    </label>
+                    <input
+                      id={`fala-${segment.id}`}
+                      type="text"
+                      maxLength={300}
+                      value={texts[segment.id] ?? ''}
+                      placeholder="O que é dito neste trecho?"
+                      data-testid={`local-fala-${String(index)}`}
+                      onChange={(event) => {
+                        updateText(segment.id, event.target.value)
+                      }}
+                      className="min-h-11 border-2 border-ink-line bg-ink-soft px-3 font-body text-sm text-paper placeholder:text-muted"
+                    />
+                  </div>
+                )
+              })}
             </div>
           </details>
         ) : null}
@@ -966,6 +1043,9 @@ function LocalDubStage({
             segments={orderedSegments}
             durationMs={selected.durationMs}
             video={videoElement}
+            sources={sources}
+            loadOriginalAudio={loadOriginalAudio}
+            sourceFileName={selected.fileName}
           />
         ) : null}
 

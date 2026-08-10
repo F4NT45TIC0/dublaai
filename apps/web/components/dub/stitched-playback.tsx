@@ -5,8 +5,10 @@ import { decodeWav, encodeWav } from '@dubla/dsp'
 import type { SpeakerSegment } from '@dubla/shared'
 import { Button } from '@dubla/ui'
 import { stitchTakes, type Take } from '@/lib/stitch-takes'
+import { originalTakesFor, type SegmentSource } from '@/lib/segment-sources'
 import { bestTakePerSegment, STITCH_PAD_MS } from '@/lib/take-modes'
 import type { RecorderAttempt } from '@/lib/use-recorder'
+import { DubbedVideoExport } from '@/components/upload/dubbed-video-export'
 import { AttemptPlayback } from './attempt-playback'
 
 export interface StitchedPlaybackProps {
@@ -14,6 +16,20 @@ export interface StitchedPlaybackProps {
   readonly segments: readonly SpeakerSegment[]
   readonly durationMs: number
   readonly video: HTMLVideoElement | null
+  /** Trechos deixados com a voz original do vídeo. */
+  readonly sources?: Readonly<Record<string, SegmentSource | undefined>>
+  /**
+   * Decodifica o áudio original sob demanda.
+   *
+   * É função, e não o áudio pronto, porque em vídeo de 5 minutos são dezenas de
+   * MB que só fazem falta se algum trecho realmente usar a voz original.
+   */
+  readonly loadOriginalAudio?: () => Promise<{
+    readonly samples: Float32Array
+    readonly sampleRate: number
+  }>
+  /** Nome do arquivo de origem, usado para nomear o vídeo exportado. */
+  readonly sourceFileName?: string
 }
 
 /**
@@ -33,6 +49,9 @@ export function StitchedPlayback({
   segments,
   durationMs,
   video,
+  sources,
+  loadOriginalAudio,
+  sourceFileName,
 }: StitchedPlaybackProps) {
   const [building, setBuilding] = useState(false)
   const [stitched, setStitched] = useState<RecorderAttempt | null>(null)
@@ -42,10 +61,16 @@ export function StitchedPlayback({
   const buildIdRef = useRef(0)
 
   const best = bestTakePerSegment(attempts)
-  const takeCount = best.size
+  const originalCount = segments.filter((segment) => sources?.[segment.id] === 'original').length
+  // Trecho no original também é uma fala montada: ignorá-lo faria a contagem
+  // mentir justamente para quem escolheu não dublar tudo.
+  const takeCount = best.size + originalCount
 
   // Tomada nova ou regravada invalida a costura anterior (§67 para o URL).
-  const takesSignature = [...best.values()].map((attempt) => attempt.id).join('|')
+  const takesSignature = [
+    ...[...best.values()].map((attempt) => attempt.id),
+    ...segments.filter((segment) => sources?.[segment.id] === 'original').map((s) => `orig:${s.id}`),
+  ].join('|')
   useEffect(() => {
     buildIdRef.current += 1
     setStitched(null)
@@ -93,6 +118,15 @@ export function StitchedPlayback({
         })
       }
 
+      // Trechos com a voz original entram como tomadas comuns, de offset zero.
+      const usesOriginal = segments.some((segment) => sources?.[segment.id] === 'original')
+      if (usesOriginal && loadOriginalAudio) {
+        const original = await loadOriginalAudio()
+        if (buildIdRef.current !== buildId) return
+        if (sampleRate === 0) sampleRate = original.sampleRate
+        takes.push(...originalTakesFor(segments, sources ?? {}, original, durationMs))
+      }
+
       if (takes.length === 0 || sampleRate === 0) {
         throw new Error('nenhuma tomada aproveitável')
       }
@@ -130,7 +164,7 @@ export function StitchedPlayback({
     } finally {
       if (buildIdRef.current === buildId) setBuilding(false)
     }
-  }, [best, segments, durationMs])
+  }, [best, segments, durationMs, sources, loadOriginalAudio])
 
   if (takeCount === 0) return null
 
@@ -148,7 +182,16 @@ export function StitchedPlayback({
       </div>
 
       {stitched ? (
-        <AttemptPlayback attempt={stitched} video={video} />
+        <>
+          <AttemptPlayback attempt={stitched} video={video} />
+          {sourceFileName ? (
+            <DubbedVideoExport
+              attempt={stitched}
+              video={video}
+              sourceFileName={sourceFileName}
+            />
+          ) : null}
+        </>
       ) : (
         <Button
           size="lg"

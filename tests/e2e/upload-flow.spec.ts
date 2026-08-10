@@ -192,6 +192,35 @@ test.describe('arquivo ou URL de vídeo', () => {
     await expect(page.getByTestId('local-start-dub')).toContainText('trecho 2')
   })
 
+  test('trechos com a voz original ficam de fora da gravação e entram na cena', async ({
+    page,
+  }) => {
+    await page.goto('/enviar')
+    await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
+    await expect(
+      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
+    ).toBeVisible({ timeout: 60_000 })
+
+    await page.getByTestId('local-take-mode-segment').click()
+
+    // Deixa os trechos 2 e 3 com a voz do vídeo; só o 1 será dublado.
+    await page.locator('summary', { hasText: /Falas da cena/i }).click()
+    await page.getByTestId('local-fonte-1').click()
+    await page.getByTestId('local-fonte-2').click()
+    await expect(page.getByTestId('local-fonte-1')).toHaveAttribute('aria-pressed', 'true')
+
+    await page.getByTestId('local-start-dub').click()
+    await waitForLocalState(page, 'preview', 40_000)
+
+    // A próxima pendência pula 2 e 3: quem está no original já está resolvido.
+    await page.getByTestId('local-next-segment').click()
+    await waitForLocalState(page, 'idle')
+    await expect(page.getByTestId('local-start-dub')).toContainText('trecho 4')
+
+    // A cena completa conta a tomada gravada e os dois trechos originais.
+    await expect(page.getByTestId('stitched-playback')).toContainText('3 falas montadas')
+  })
+
   test('nenhum microfone continua ativo depois de sair da página (§111.14)', async ({ page }) => {
     await page.addInitScript(() => {
       const registry: MediaStreamTrack[] = []
