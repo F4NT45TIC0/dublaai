@@ -3,12 +3,9 @@ import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 
-const NO_AUDIO_VIDEO = resolve(
-  import.meta.dirname,
-  '../../apps/web/public/media/scenes/dragao-domestico-fogo-na-cozinha/video.mp4',
-)
+const NO_AUDIO_VIDEO = resolve(import.meta.dirname, 'fixtures/video-without-audio.mp4')
 const VALID_VIDEO = resolve(import.meta.dirname, 'fixtures/video-with-reference-audio.mp4')
-const VIDEO_OVER_LIMIT = resolve(import.meta.dirname, 'fixtures/video-over-60s.mp4')
+const VIDEO_OVER_LIMIT = resolve(import.meta.dirname, 'fixtures/video-over-limit.mp4')
 
 interface ProbeResult {
   readonly streams?: readonly {
@@ -248,12 +245,12 @@ test.describe('arquivo ou URL de vídeo', () => {
     await waitForLocalState(page, 'idle')
   })
 
-  test('recusa um vídeo real com mais de 60 segundos', async ({ page }) => {
+  test('recusa um vídeo real acima do limite de duração', async ({ page }) => {
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(VIDEO_OVER_LIMIT)
 
     await expect(page.locator('p[role="alert"]')).toHaveText(
-      'O vídeo precisa ter no máximo 1 minuto.',
+      'O vídeo precisa ter no máximo 5 minutos.',
     )
     await expect(localDubPanel(page)).toHaveCount(0)
   })

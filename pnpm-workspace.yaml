@@ -4,8 +4,14 @@ packages:
 
 # esbuild precisa do script de instalação para posicionar o binário nativo
 # usado pelo Vitest.
+# A transcrição local roda no navegador com onnxruntime-web. Os pacotes de
+# Node vêm de carona no grafo da transformers.js e nunca são executados —
+# compilar binário nativo deles só atrasaria a instalação, inclusive na Vercel.
 allowBuilds:
   esbuild: true
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false
 
 # Mantém as versões de React alinhadas entre a app e os pacotes de UI.
 # Sem isso, um segundo React no grafo quebra hooks de forma silenciosa.

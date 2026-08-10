@@ -22,6 +22,48 @@ export type VideoReference = PreparedVideoReference | UnavailableVideoReference
 
 const REFERENCE_TIMEOUT_MS = 30_000
 
+export interface DecodedMonoAudio {
+  readonly samples: Float32Array
+  readonly sampleRate: number
+}
+
+/**
+ * Faixa de áudio do vídeo, somada em mono e recortada na duração da cena.
+ *
+ * Fica exportado porque a transcrição precisa exatamente do mesmo material, só
+ * que sob demanda: guardar essas amostras vivas o tempo todo custaria dezenas
+ * de MB por vídeo longo, e quase ninguém pede transcrição duas vezes.
+ */
+export async function decodeVideoMonoAudio(
+  video: Blob,
+  durationMs: number,
+  signal?: AbortSignal,
+): Promise<DecodedMonoAudio> {
+  throwIfAborted(signal)
+  const encoded = await withAbort(video.arrayBuffer(), signal)
+  throwIfAborted(signal)
+
+  // OfflineAudioContext decodifica sem abrir dispositivo e sem depender da
+  // política de autoplay. Um frame basta; só usamos decodeAudioData.
+  const decoder = new OfflineAudioContext(1, 1, 44_100)
+  const audio = await withAbort(decoder.decodeAudioData(encoded), signal)
+  throwIfAborted(signal)
+
+  const targetFrames = Math.max(1, Math.round((durationMs / 1_000) * audio.sampleRate))
+  const samples = new Float32Array(targetFrames)
+  const copyFrames = Math.min(targetFrames, audio.length)
+
+  for (let channel = 0; channel < audio.numberOfChannels; channel += 1) {
+    const source = audio.getChannelData(channel)
+    const scale = 1 / audio.numberOfChannels
+    for (let frame = 0; frame < copyFrames; frame += 1) {
+      samples[frame] = (samples[frame] ?? 0) + (source[frame] ?? 0) * scale
+    }
+  }
+
+  return { samples, sampleRate: audio.sampleRate }
+}
+
 /** Decodifica o áudio do contêiner e deixa todo DSP pesado para o worker. */
 export async function prepareVideoReference(
   video: Blob,
@@ -30,29 +72,8 @@ export async function prepareVideoReference(
   signal?: AbortSignal,
 ): Promise<VideoReference> {
   try {
-    throwIfAborted(signal)
-    const encoded = await withAbort(video.arrayBuffer(), signal)
-    throwIfAborted(signal)
-
-    // OfflineAudioContext decodifica sem abrir dispositivo e sem depender da
-    // política de autoplay. Um frame basta; só usamos decodeAudioData.
-    const decoder = new OfflineAudioContext(1, 1, 44_100)
-    const audio = await withAbort(decoder.decodeAudioData(encoded), signal)
-    throwIfAborted(signal)
-
-    const targetFrames = Math.max(1, Math.round((durationMs / 1_000) * audio.sampleRate))
-    const samples = new Float32Array(targetFrames)
-    const copyFrames = Math.min(targetFrames, audio.length)
-
-    for (let channel = 0; channel < audio.numberOfChannels; channel += 1) {
-      const source = audio.getChannelData(channel)
-      const scale = 1 / audio.numberOfChannels
-      for (let frame = 0; frame < copyFrames; frame += 1) {
-        samples[frame] = (samples[frame] ?? 0) + (source[frame] ?? 0) * scale
-      }
-    }
-
-    const reference = await analyzeReference(samples, audio.sampleRate, sceneId, signal)
+    const { samples, sampleRate } = await decodeVideoMonoAudio(video, durationMs, signal)
+    const reference = await analyzeReference(samples, sampleRate, sceneId, signal)
     if (reference.segments.length === 0) {
       return {
         status: 'unavailable',

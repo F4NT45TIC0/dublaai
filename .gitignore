@@ -32,3 +32,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Runtime do onnxruntime-web, copiado de node_modules no build (~74 MB).
+apps/web/public/onnx/

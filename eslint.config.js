@@ -39,7 +39,8 @@ export default defineConfig(
       '**/coverage/**',
       '**/playwright-report/**',
       '**/test-results/**',
-      'apps/web/public/media/**',
+      // Runtime do onnxruntime-web copiado de node_modules no build.
+      'apps/web/public/onnx/**',
     ],
   },
 
@@ -50,7 +51,10 @@ export default defineConfig(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // Scripts de build soltos, fora de qualquer tsconfig de aplicação.
+          allowDefaultProject: ['apps/web/scripts/*.mjs'],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -171,7 +175,13 @@ export default defineConfig(
 
   // Scripts, configs e testes rodam no Node.
   {
-    files: ['scripts/**/*.ts', '**/*.config.ts', '**/*.config.js', 'tests/**/*.ts'],
+    files: [
+      'scripts/**/*.ts',
+      'apps/*/scripts/**/*.mjs',
+      '**/*.config.ts',
+      '**/*.config.js',
+      'tests/**/*.ts',
+    ],
     languageOptions: { globals: globals.node },
     rules: {
       'no-console': 'off',

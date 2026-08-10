@@ -45,7 +45,7 @@ function buildVoiceTrack(): Float32Array {
 }
 
 function buildVideoOverDurationLimit(): void {
-  const outputPath = join(OUTPUT_DIR, 'video-over-60s.mp4')
+  const outputPath = join(OUTPUT_DIR, 'video-over-limit.mp4')
 
   // Um quadro por segundo e resolução mínima mantêm a fixture pequena,
   // mas ainda produzem um MP4 real cuja duração o navegador precisa ler.
@@ -53,7 +53,7 @@ function buildVideoOverDurationLimit(): void {
     '-f',
     'lavfi',
     '-i',
-    'color=c=black:s=160x90:r=1:d=61.1',
+    'color=c=black:s=160x90:r=1:d=301.2',
     '-an',
     '-c:v',
     'libx264',
@@ -67,7 +67,37 @@ function buildVideoOverDurationLimit(): void {
     '+faststart',
     outputPath,
   ])
-  console.log('video-over-60s.mp4 — 61+ s')
+  console.log('video-over-limit.mp4 — 5 min + margem')
+}
+
+/**
+ * Vídeo válido e curto, mas sem nenhuma faixa de áudio.
+ *
+ * Cobre o caminho em que não há referência sonora: a dublagem continua
+ * possível, e a pontuação precisa ficar honestamente indisponível em vez de
+ * inventar um número contra o silêncio.
+ */
+function buildVideoWithoutAudio(): void {
+  const outputPath = join(OUTPUT_DIR, 'video-without-audio.mp4')
+  ffmpeg([
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=0x14110D:s=320x180:r=12:d=6',
+    '-an',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'ultrafast',
+    '-crf',
+    '40',
+    '-pix_fmt',
+    'yuv420p',
+    '-movflags',
+    '+faststart',
+    outputPath,
+  ])
+  console.log('video-without-audio.mp4 — 6 s, sem faixa de áudio')
 }
 
 function buildVideoWithReferenceAudio(voicePath: string): void {
@@ -122,6 +152,7 @@ function main(): void {
 
   buildVideoWithReferenceAudio(voicePath)
   buildVideoOverDurationLimit()
+  buildVideoWithoutAudio()
 
   console.log(`\nFixtures em ${OUTPUT_DIR}`)
 }

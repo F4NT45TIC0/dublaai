@@ -36,7 +36,10 @@ import {
   validateLocalVideoFile,
   validateLocalVideoMetadata,
 } from '@/lib/local-video'
-import { prepareVideoReference, type VideoReference } from '@/lib/prepare-video-reference'
+import { decodeVideoMonoAudio, prepareVideoReference } from '@/lib/prepare-video-reference'
+import { assignTranscript, untranscribedCount } from '@/lib/assign-transcript'
+import { transcribeReference } from '@/lib/transcribe-reference'
+import type { VideoReference } from '@/lib/prepare-video-reference'
 import { downloadRemoteVideo, validateRemoteVideoUrl } from '@/lib/remote-video'
 import { DubbedVideoExport } from './dubbed-video-export'
 
@@ -337,10 +340,10 @@ function LocalDubStage({
   /**
    * Falas digitadas pela pessoa, por trecho detectado.
    *
-   * Não existe transcrição automática aqui — o projeto decidiu não usar STT, e
-   * mandar o áudio para um serviço externo quebraria a promessa de que nada
-   * sai do aparelho. O texto vem de quem conhece a cena, e fica guardado por
-   * vídeo para sobreviver a recarregar a página.
+   * A transcrição automática escreve aqui dentro, no mesmo lugar em que a
+   * pessoa digita. Isso é de propósito: o que o Whisper entendeu é um palpite
+   * e precisa ser corrigível na hora, sem virar um campo separado e travado.
+   * Fica guardado por vídeo para sobreviver a recarregar a página.
    */
   const [texts, setTexts] = useState<Record<string, string>>(() => {
     try {
@@ -364,6 +367,76 @@ function LocalDubStage({
     },
     [selected.id],
   )
+
+  /** Escreve várias falas de uma vez sem disparar um salvamento por trecho. */
+  const mergeTexts = useCallback(
+    (entries: Record<string, string>) => {
+      setTexts((previous) => {
+        const next = { ...previous, ...entries }
+        try {
+          localStorage.setItem(`dublaai:falas:${selected.id}`, JSON.stringify(next))
+        } catch {
+          // Sem espaço para guardar não pode impedir de dublar.
+        }
+        return next
+      })
+    },
+    [selected.id],
+  )
+
+  const [transcription, setTranscription] = useState<
+    | { readonly phase: 'idle' }
+    | { readonly phase: 'running'; readonly loadedRatio: number }
+    | { readonly phase: 'done'; readonly filled: number; readonly missing: number }
+    | { readonly phase: 'failed'; readonly message: string }
+  >({ phase: 'idle' })
+
+  /**
+   * Transcreve o áudio do vídeo no próprio aparelho.
+   *
+   * É explícito, e não automático no upload, por dois motivos: o modelo custa
+   * uma dezena de MB na primeira vez, e nem todo mundo quer legenda — obrigar
+   * o download antes de deixar a pessoa dublar inverteria a prioridade.
+   */
+  const runTranscription = useCallback(() => {
+    if (!reference) return
+    setTranscription({ phase: 'running', loadedRatio: 0 })
+
+    const transcribe = async () => {
+      try {
+        // O vídeo (enviado ou baixado da URL) já vive como object URL local,
+        // então isto lê da memória da aba — não há requisição de rede aqui.
+        const video = await (await fetch(selected.url)).blob()
+        const audio = await decodeVideoMonoAudio(video, selected.durationMs)
+        const chunks = await transcribeReference(
+          audio.samples,
+          audio.sampleRate,
+          ({ loadedRatio }) => {
+            setTranscription({ phase: 'running', loadedRatio })
+          },
+        )
+
+        const base = orderSegments(reference.segments)
+        const described = assignTranscript(base, chunks)
+        const missing = untranscribedCount(base, described)
+
+        const entries: Record<string, string> = {}
+        for (const [index, segment] of described.entries()) {
+          if (segment.text !== base[index]?.text) entries[segment.id] = segment.text
+        }
+        mergeTexts(entries)
+        setTranscription({ phase: 'done', filled: described.length - missing, missing })
+      } catch (cause) {
+        setTranscription({
+          phase: 'failed',
+          message:
+            cause instanceof Error ? cause.message : 'Não conseguimos transcrever este vídeo.',
+        })
+      }
+    }
+
+    void transcribe()
+  }, [mergeTexts, reference, selected.durationMs, selected.url])
 
   /** Trechos em ordem, com o texto digitado no lugar do rótulo genérico. */
   const orderedSegments = useMemo(() => {
@@ -776,9 +849,49 @@ function LocalDubStage({
             </summary>
             <div className="flex flex-col gap-2 border-t-2 border-ink-line p-4">
               <p className="text-xs text-muted">
-                Digite o que é dito em cada trecho para a legenda acompanhar a cena durante a
-                dublagem. Nada é transcrito automaticamente — sua cena não sai do aparelho.
+                As falas podem ser reconhecidas automaticamente aqui mesmo, no seu navegador — o
+                vídeo não sai do aparelho. Na primeira vez, o reconhecimento de fala baixa cerca de
+                90 MB e fica guardado para as próximas. Ele erra às vezes; todo campo continua
+                editável.
               </p>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="secondary"
+                  disabled={transcription.phase === 'running'}
+                  data-testid="local-transcrever"
+                  onClick={runTranscription}
+                >
+                  {transcription.phase === 'running'
+                    ? 'Reconhecendo…'
+                    : transcription.phase === 'done'
+                      ? 'Reconhecer de novo'
+                      : 'Descrever as falas'}
+                </Button>
+
+                {transcription.phase === 'running' ? (
+                  <p className="text-xs text-muted" role="status">
+                    {transcription.loadedRatio > 0 && transcription.loadedRatio < 1
+                      ? `Baixando o reconhecimento de fala… ${String(Math.round(transcription.loadedRatio * 100))}%`
+                      : 'Ouvindo o vídeo. Em vídeos longos isso leva alguns minutos.'}
+                  </p>
+                ) : null}
+
+                {transcription.phase === 'done' ? (
+                  <p className="text-xs text-muted" role="status">
+                    {transcription.filled} de {orderedSegments.length} falas reconhecidas
+                    {transcription.missing > 0
+                      ? ` — ${String(transcription.missing)} ${transcription.missing === 1 ? 'continuou' : 'continuaram'} sem texto e ${transcription.missing === 1 ? 'pode' : 'podem'} ser preenchida${transcription.missing === 1 ? '' : 's'} à mão.`
+                      : '.'}
+                  </p>
+                ) : null}
+              </div>
+
+              {transcription.phase === 'failed' ? (
+                <p className="border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
+                  {transcription.message} Você ainda pode escrever as falas à mão.
+                </p>
+              ) : null}
               {orderedSegments.map((segment, index) => (
                 <label key={segment.id} className="flex flex-col gap-1">
                   <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">

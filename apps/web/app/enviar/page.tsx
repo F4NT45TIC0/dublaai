@@ -18,7 +18,7 @@ export default function UploadPage() {
           Duble a sua própria cena
         </h1>
         <p className="mt-5 max-w-2xl text-lg leading-relaxed opacity-80">
-          Escolha um vídeo de até 1 minuto no computador ou cole uma URL direta. Extraímos a
+          Escolha um vídeo de até 5 minutos no computador ou cole uma URL direta. Extraímos a
           referência sonora, mostramos a forma de onda, pontuamos sua dublagem e liberamos o
           download — tudo no navegador.
         </p>
