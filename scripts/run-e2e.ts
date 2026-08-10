@@ -8,7 +8,8 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const ROOT = resolve(import.meta.dirname, '..')
@@ -16,6 +17,9 @@ const WEB_ROOT = resolve(ROOT, 'apps', 'web')
 const NEXT_CLI = resolve(WEB_ROOT, 'node_modules', 'next', 'dist', 'bin', 'next')
 const PLAYWRIGHT_CLI = resolve(ROOT, 'node_modules', '@playwright', 'test', 'cli.js')
 const requestedPort = Number(process.env['PLAYWRIGHT_PORT'] ?? 3100)
+
+/** Partidas do teste vivem fora do repositório e somem com o diretório temporário. */
+const MATCH_DIR = join(tmpdir(), 'dublaai-partidas-e2e')
 const PORT =
   Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65_535
     ? requestedPort
@@ -69,6 +73,13 @@ async function run(): Promise<number> {
         cwd: WEB_ROOT,
         stdio: 'inherit',
         windowsHide: true,
+        env: {
+          ...process.env,
+          // O modo online exige armazenamento compartilhado. Na Vercel é o
+          // Blob; aqui a build roda num processo só, então o disco serve — e a
+          // variável deixa isso explícito, em vez de acontecer por descuido.
+          DUBLA_MATCH_DIR: MATCH_DIR,
+        },
       })
       await waitForServer(server)
     }

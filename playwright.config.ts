@@ -1,5 +1,6 @@
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { defineConfig, devices } from '@playwright/test'
-import { resolve } from 'node:path'
 
 const VOICE_FIXTURE = resolve(import.meta.dirname, 'tests/e2e/fixtures/voice-30s.wav')
 const requestedPort = Number(process.env['PLAYWRIGHT_PORT'] ?? 3100)
@@ -9,6 +10,9 @@ const PORT =
     : 3100
 const BASE_URL = `http://127.0.0.1:${String(PORT)}`
 const REUSE_EXISTING_SERVER = process.env['PLAYWRIGHT_REUSE_SERVER'] === '1'
+
+/** Partidas do teste vivem fora do repositório e somem com o diretório temporário. */
+const MATCH_DIR = join(tmpdir(), 'dublaai-partidas-e2e')
 
 /**
  * E2E do fluxo de dublagem (§77).
@@ -63,6 +67,12 @@ export default defineConfig({
   webServer: {
     command: `node apps/web/node_modules/next/dist/bin/next start apps/web --port ${String(PORT)}`,
     url: BASE_URL,
+    env: {
+      // O modo online precisa de armazenamento compartilhado. Na Vercel é o
+      // Blob; aqui a build de produção roda num processo só, então o disco
+      // serve — e a variável deixa isso explícito em vez de acontecer sozinho.
+      DUBLA_MATCH_DIR: MATCH_DIR,
+    },
     reuseExistingServer: REUSE_EXISTING_SERVER,
     timeout: 180_000,
     stdout: 'ignore',

@@ -157,23 +157,55 @@ alguém precisa lembrar.
 
 ---
 
+## Modo online (partida com um amigo)
+
+O modo online é o **único** lugar em que áudio sai do aparelho, e por isso é o
+único que precisa de configuração. Ele guarda as tomadas de voz num Blob store
+da Vercel:
+
+1. no projeto da Vercel, abra **Storage → Blob** e crie um store;
+2. conecte-o ao projeto. A variável `BLOB_READ_WRITE_TOKEN` aparece sozinha;
+3. faça um novo deploy.
+
+Sem essa variável, a tela do modo online diz exatamente isso em vez de fingir
+que funciona — e todo o resto do Dubla Aí segue normal, sem servidor nenhum.
+
+O vídeo **não** trafega: cada pessoa abre o mesmo arquivo no próprio computador
+e a partida guarda só a impressão digital dele, recusando quem chegar com outro.
+As tomadas expiram em 24 horas.
+
+O código da partida tem 12 caracteres (`K7M2-9XQP-4TVB`), e não 6 dígitos, por
+um motivo concreto: ele é a única coisa que protege as gravações. Com 6 dígitos,
+percorrer o milhão de combinações e baixar voz de estranhos seria questão de
+minutos.
+
+Em desenvolvimento (`pnpm dev`) o modo online usa o disco local em
+`.dubla-partidas/`, o que permite jogar entre duas abas sem nuvem nenhuma. Esse
+caminho **não** serve para produção — o disco de uma função serverless não é
+compartilhado entre instâncias — e por isso só liga com `next dev` ou com
+`DUBLA_MATCH_DIR` escrita à mão (é o que o teste de ponta a ponta usa).
+
 ## Conteúdo e direitos
 
-Todo o catálogo é **autoral**: diálogos escritos para este projeto, vozes
-sintetizadas localmente, vídeos gerados por ffmpeg, obras e personagens
-fictícios. Nenhum arquivo de terceiros é baixado e nenhuma obra comercial entra
-no repositório, nem para demonstração.
-
-Toda cena publicada exige um registro em `content_rights` — garantido por
-trigger no banco. Ver [`docs/CONTENT_RIGHTS.md`](docs/CONTENT_RIGHTS.md).
+O Dubla Aí não distribui conteúdo: o material é sempre um arquivo que a própria
+pessoa escolhe no computador. Use apenas o que você tem o direito de usar.
 
 ## Privacidade
 
-Nas fases atuais, a gravação, a análise e a renderização acontecem no navegador,
-sem upload da voz e sem telemetria de áudio. Ao colar uma URL, o navegador faz a
-requisição diretamente ao host informado — esse host recebe a requisição e o IP
-como em qualquer download —, mas o arquivo não passa por um servidor do Dubla
-Aí. Ver [`docs/SECURITY.md`](docs/SECURITY.md).
+A gravação, a análise, a transcrição e a renderização acontecem no navegador.
+Nada disso sobe para servidor.
+
+A transcrição automática das falas roda localmente (Whisper via
+onnxruntime-web). O áudio não sai do aparelho; o que vem da rede é o modelo,
+baixado uma vez (~90 MB) e guardado em cache.
+
+Ao colar uma URL, o navegador faz a requisição diretamente ao host informado —
+esse host recebe a requisição e o IP como em qualquer download —, mas o arquivo
+não passa por um servidor do Dubla Aí.
+
+A exceção é o **modo online**, descrito acima: nele as tomadas de voz vão para o
+armazenamento da partida para que a outra pessoa possa ouvi-las. A tela avisa
+isso antes de qualquer gravação. Ver [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ---
 

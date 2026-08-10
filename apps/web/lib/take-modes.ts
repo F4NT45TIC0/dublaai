@@ -12,7 +12,7 @@ import type { SegmentTakeState } from '@/components/dub/segment-navigator'
  */
 
 /** Como a cena é gravada. */
-export type TakeMode = 'full' | 'segment' | 'duet'
+export type TakeMode = 'full' | 'segment' | 'duet' | 'online'
 
 /**
  * Folga antes e depois da fala.

@@ -30,6 +30,17 @@ export interface StitchedPlaybackProps {
   }>
   /** Nome do arquivo de origem, usado para nomear o vídeo exportado. */
   readonly sourceFileName?: string
+  /**
+   * Tomadas que vieram da partida online — inclusive as do outro aparelho.
+   *
+   * Sem elas o modo online não fecharia: cada pessoa ouviria só a própria voz,
+   * e a graça é justamente responder à fala do outro.
+   */
+  readonly remoteTakes?: readonly {
+    readonly segmentId: string
+    readonly url: string
+    readonly mediaStartOffsetMs: number
+  }[]
 }
 
 /**
@@ -52,6 +63,7 @@ export function StitchedPlayback({
   sources,
   loadOriginalAudio,
   sourceFileName,
+  remoteTakes,
 }: StitchedPlaybackProps) {
   const [building, setBuilding] = useState(false)
   const [stitched, setStitched] = useState<RecorderAttempt | null>(null)
@@ -64,12 +76,13 @@ export function StitchedPlayback({
   const originalCount = segments.filter((segment) => sources?.[segment.id] === 'original').length
   // Trecho no original também é uma fala montada: ignorá-lo faria a contagem
   // mentir justamente para quem escolheu não dublar tudo.
-  const takeCount = best.size + originalCount
+  const takeCount = best.size + originalCount + (remoteTakes?.length ?? 0)
 
   // Tomada nova ou regravada invalida a costura anterior (§67 para o URL).
   const takesSignature = [
     ...[...best.values()].map((attempt) => attempt.id),
     ...segments.filter((segment) => sources?.[segment.id] === 'original').map((s) => `orig:${s.id}`),
+    ...(remoteTakes ?? []).map((take) => `rem:${take.segmentId}:${take.url}`),
   ].join('|')
   useEffect(() => {
     buildIdRef.current += 1
@@ -113,6 +126,24 @@ export function StitchedPlayback({
           sampleRate: decoded.sampleRate,
           mediaStartOffsetMs: attempt.clock.mediaStartOffsetMs,
           // Margem menor que a folga de gravação: o embalo não entra na cena.
+          windowStartMs: Math.max(0, segment.startMs - STITCH_PAD_MS),
+          windowEndMs: Math.min(durationMs, segment.endMs + STITCH_PAD_MS),
+        })
+      }
+
+      for (const remote of remoteTakes ?? []) {
+        const segment = bySegment.get(remote.segmentId)
+        if (!segment) continue
+
+        const response = await fetch(remote.url)
+        const decoded = decodeWav(await response.arrayBuffer())
+        if (buildIdRef.current !== buildId) return
+        if (sampleRate === 0) sampleRate = decoded.sampleRate
+
+        takes.push({
+          samples: decoded.samples,
+          sampleRate: decoded.sampleRate,
+          mediaStartOffsetMs: remote.mediaStartOffsetMs,
           windowStartMs: Math.max(0, segment.startMs - STITCH_PAD_MS),
           windowEndMs: Math.min(durationMs, segment.endMs + STITCH_PAD_MS),
         })
@@ -164,7 +195,7 @@ export function StitchedPlayback({
     } finally {
       if (buildIdRef.current === buildId) setBuilding(false)
     }
-  }, [best, segments, durationMs, sources, loadOriginalAudio])
+  }, [best, segments, durationMs, sources, loadOriginalAudio, remoteTakes])
 
   if (takeCount === 0) return null
 

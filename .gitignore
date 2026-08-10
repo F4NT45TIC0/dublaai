@@ -35,3 +35,6 @@ Thumbs.db
 
 # Runtime do onnxruntime-web, copiado de node_modules no build (~74 MB).
 apps/web/public/onnx/
+
+# Partidas online do modo de desenvolvimento (disco local).
+.dubla-partidas/

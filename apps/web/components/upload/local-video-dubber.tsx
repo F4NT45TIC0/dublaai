@@ -40,6 +40,8 @@ import { decodeVideoMonoAudio, prepareVideoReference } from '@/lib/prepare-video
 import { assignTranscript, untranscribedCount } from '@/lib/assign-transcript'
 import { transcribeReference } from '@/lib/transcribe-reference'
 import { isOriginal, type SegmentSource } from '@/lib/segment-sources'
+import { OnlineMatchPanel } from '@/components/dub/online-match-panel'
+import { useOnlineMatch } from '@/lib/use-online-match'
 import type { VideoReference } from '@/lib/prepare-video-reference'
 import { downloadRemoteVideo, validateRemoteVideoUrl } from '@/lib/remote-video'
 import { DubbedVideoExport } from './dubbed-video-export'
@@ -518,12 +520,51 @@ function LocalDubStage({
 
   const duetFinished = takeMode === 'duet' && duet !== null && isComplete(orderedSegments, duet)
 
+  /**
+   * Cena da partida online.
+   *
+   * Só os trechos entram na rede — o vídeo fica com cada um. O texto vai junto
+   * porque é a legenda que a outra pessoa vai ler para dublar.
+   */
+  const onlineScene = useMemo(
+    () => ({
+      videoId: selected.id,
+      videoName: selected.fileName,
+      durationMs: Math.round(selected.durationMs),
+      segments: orderedSegments.map((segment) => ({
+        id: segment.id,
+        characterId: segment.characterId,
+        startMs: Math.round(segment.startMs),
+        endMs: Math.round(segment.endMs),
+        text: segment.text.slice(0, 300),
+      })),
+    }),
+    [orderedSegments, selected.durationMs, selected.fileName, selected.id],
+  )
+  const match = useOnlineMatch(onlineScene)
+
+  /** Tomadas da partida, dos dois jogadores, prontas para a costura. */
+  const onlineTakes = useMemo(() => {
+    if (takeMode !== 'online' || !match.state) return undefined
+    return Object.entries(match.state.takes).flatMap(([segmentId, take]) =>
+      take ? [{ segmentId, url: take.url, mediaStartOffsetMs: take.mediaStartOffsetMs }] : [],
+    )
+  }, [takeMode, match.state])
+
+  /** No online, quem manda na fala da vez é o servidor, não esta tela. */
+  const onlineSegment = useMemo(() => {
+    if (takeMode !== 'online' || !match.activeSegment) return undefined
+    return orderedSegments.find((segment) => segment.id === match.activeSegment?.id)
+  }, [takeMode, match.activeSegment, orderedSegments])
+
   const activeSegment =
     takeMode === 'segment'
       ? (orderedSegments[activeSegmentIndex] ?? orderedSegments[0])
       : takeMode === 'duet'
         ? duetSegment
-        : undefined
+        : takeMode === 'online'
+          ? onlineSegment
+          : undefined
 
   const analysisWindow = useMemo(
     () => (activeSegment ? analysisWindowFor(activeSegment, selected.durationMs) : undefined),
@@ -849,7 +890,12 @@ function LocalDubStage({
                 [
                   { value: 'full', label: 'Cena inteira' },
                   { value: 'segment', label: 'Fala a fala' },
-                  ...(duetAvailable ? [{ value: 'duet', label: 'Em dupla' } as const] : []),
+                  ...(duetAvailable
+                    ? ([
+                        { value: 'duet', label: 'Em dupla' },
+                        { value: 'online', label: 'Online' },
+                      ] as const)
+                    : []),
                 ] as const
               ).map((option) => (
                 <button
@@ -1037,6 +1083,14 @@ function LocalDubStage({
           />
         ) : null}
 
+        {takeMode === 'online' ? (
+          <OnlineMatchPanel
+            match={match}
+            characters={characters}
+            videoName={selected.fileName}
+          />
+        ) : null}
+
         {takeMode !== 'full' && (state.matches('idle') || state.matches('preview')) ? (
           <StitchedPlayback
             attempts={recorder.attempts}
@@ -1046,10 +1100,18 @@ function LocalDubStage({
             sources={sources}
             loadOriginalAudio={loadOriginalAudio}
             sourceFileName={selected.fileName}
+            remoteTakes={onlineTakes}
           />
         ) : null}
 
-        {state.matches('idle') && recorder.supported && !duetFinished && !(takeMode === 'duet' && !duet) ? (
+        {state.matches('idle') &&
+        recorder.supported &&
+        !duetFinished &&
+        !(takeMode === 'duet' && !duet) &&
+        // No online o botão some fora da sua vez: apertar antes da hora daria
+        // uma gravação que o servidor recusaria depois de a pessoa já ter
+        // falado, que é a pior hora de descobrir.
+        !(takeMode === 'online' && !match.myTurn) ? (
           <div className="flex flex-col gap-3">
             <Button
               size="hero"
@@ -1118,6 +1180,33 @@ function LocalDubStage({
               sourceFileName={selected.fileName}
               onExportingChange={setExportingVideo}
             />
+            {takeMode === 'online' && activeSegment && match.myTurn ? (
+              <Button
+                size="lg"
+                disabled={match.busy}
+                data-testid="online-enviar-fala"
+                onClick={() => {
+                  const attempt = recorder.currentAttempt
+                  if (!attempt) return
+                  const enviar = async () => {
+                    const wav = await (await fetch(attempt.wavUrl)).blob()
+                    const enviada = await match.submit(
+                      activeSegment.id,
+                      wav,
+                      attempt.clock.mediaStartOffsetMs,
+                      attempt.clock.sampleRate,
+                    )
+                    // Só limpa a tela depois que o servidor aceitou: se a rede
+                    // falhar, a tomada continua aqui para tentar de novo.
+                    if (enviada) recorder.send({ type: 'RESET' })
+                  }
+                  void enviar()
+                }}
+              >
+                {match.busy ? 'Enviando…' : 'Enviar minha fala ▶'}
+              </Button>
+            ) : null}
+
             {takeMode === 'segment' && activeSegment ? (
               <Button
                 size="lg"
