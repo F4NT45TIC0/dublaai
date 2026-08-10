@@ -9,9 +9,19 @@ import { Countdown } from './countdown'
 import { LevelMeter } from './level-meter'
 import { AttemptPlayback } from './attempt-playback'
 import { SegmentNavigator, type SegmentTakeState } from './segment-navigator'
+import { DuetSetup, DuetSummary, DuetTurn } from './duet-panel'
+import {
+  isComplete,
+  MIN_DUET_CHARACTERS,
+  nextPendingIndex,
+  playableSegments,
+  recordTake,
+  segmentOwner,
+  type DuetSession,
+} from '@/lib/duet-session'
 
 /** Como a cena é gravada. */
-type TakeMode = 'full' | 'segment'
+type TakeMode = 'full' | 'segment' | 'duet'
 
 /**
  * Folga antes e depois da fala.
@@ -57,16 +67,32 @@ export function DubPanel({
 }: DubPanelProps) {
   const [takeMode, setTakeMode] = useState<TakeMode>('full')
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0)
+  const [duet, setDuet] = useState<DuetSession | null>(null)
 
   const orderedSegments = useMemo(
     () => [...scene.speakerSegments].sort((a, b) => a.startMs - b.startMs),
     [scene.speakerSegments],
   )
-  // Só existe no modo fala-a-fala: quem é  aqui está gravando a
-  // cena inteira, e o TypeScript estreita o resto do componente a partir disto.
+  /** Dueto exige personagens suficientes para dois donos distintos. */
+  const duetAvailable = scene.characters.length >= MIN_DUET_CHARACTERS
+
+  /** No dueto, a fala da vez é decidida pelo rodízio, não pela pessoa. */
+  const duetSegment = useMemo(() => {
+    if (takeMode !== 'duet' || !duet) return undefined
+    const playable = playableSegments(orderedSegments, duet.players)
+    const index = nextPendingIndex(orderedSegments, duet)
+    return index === -1 ? undefined : playable[index]
+  }, [takeMode, duet, orderedSegments])
+
+  const duetFinished = takeMode === 'duet' && duet !== null && isComplete(orderedSegments, duet)
+
+  // Só existe quando se grava uma fala por vez; `undefined` significa cena
+  // inteira, e o TypeScript estreita o resto do componente a partir disto.
   const activeSegment =
     takeMode === 'segment'
       ? (orderedSegments[activeSegmentIndex] ?? orderedSegments[0])
+      : takeMode === 'duet'
+        ? duetSegment
       : undefined
   const bySegment = activeSegment !== undefined
 
@@ -120,6 +146,42 @@ export function DubPanel({
       cancelAnimationFrame(rafId)
     }
   }, [isRecording, analysisWindow, video, stopRecording])
+
+  /**
+   * Registra a tomada na sessão de dueto e passa a vez.
+   *
+   * O gatilho é a tomada existir no histórico, não o clique em parar: assim
+   * uma gravação recusada por estar inaudível (§100) não consome o turno.
+   */
+  useEffect(() => {
+    if (takeMode !== 'duet' || !duet || !duetSegment) return
+    const owner = segmentOwner(duetSegment, duet.players)
+    if (!owner) return
+
+    const hasTake = recorder.attempts.some((attempt) => attempt.segmentId === duetSegment.id)
+    if (!hasTake) return
+
+    setDuet((current) =>
+      current && current.takes[duetSegment.id] === undefined
+        ? recordTake(current, duetSegment.id, owner.id)
+        : current,
+    )
+  }, [takeMode, duet, duetSegment, recorder.attempts])
+
+  /** Nota de cada fala, para o placar do dueto. */
+  const scoreBySegment = useMemo(() => {
+    const map: Record<string, number | null> = {}
+    for (const attempt of recorder.attempts) {
+      const segmentId = attempt.segmentId
+      if (segmentId === undefined) continue
+      const score = attempt.result?.overall.value ?? null
+      const existing = map[segmentId]
+      if (existing === undefined || (score !== null && (existing === null || score > existing))) {
+        map[segmentId] = score
+      }
+    }
+    return map
+  }, [recorder.attempts])
 
   /** Melhor tomada por fala, para o navegador mostrar o progresso. */
   const takesBySegment = useMemo(() => {
@@ -225,12 +287,9 @@ export function DubPanel({
           <div className="flex flex-wrap gap-2">
             {(
               [
-                { value: 'full', label: 'Cena inteira', hint: 'Uma tomada do começo ao fim.' },
-                {
-                  value: 'segment',
-                  label: 'Fala a fala',
-                  hint: 'Uma tomada por fala, com repetição individual.',
-                },
+                { value: 'full', label: 'Cena inteira' },
+                { value: 'segment', label: 'Fala a fala' },
+                ...(duetAvailable ? [{ value: 'duet', label: 'Em dupla' } as const] : []),
               ] as const
             ).map((option) => (
               <button
@@ -254,12 +313,54 @@ export function DubPanel({
           <p className="text-sm text-muted">
             {takeMode === 'segment'
               ? 'Cada fala é gravada e avaliada separadamente. Você repete só a que não ficou boa.'
-              : 'Uma tomada do começo ao fim da cena.'}
+              : takeMode === 'duet'
+                ? 'Dois jogadores no mesmo aparelho, revezando as falas até fechar a cena.'
+                : 'Uma tomada do começo ao fim da cena.'}
           </p>
+          {!duetAvailable && orderedSegments.length > 1 ? (
+            <p className="text-xs text-muted">
+              O modo em dupla precisa de uma cena com dois personagens ou mais.
+            </p>
+          ) : null}
         </fieldset>
       )}
 
-      {bySegment && (state.matches('idle') || state.matches('preview')) ? (
+      {takeMode === 'duet' && !duet ? (
+        <DuetSetup
+          sceneId={scene.id}
+          characters={scene.characters}
+          onStart={(session) => {
+            setDuet(session)
+          }}
+        />
+      ) : null}
+
+      {takeMode === 'duet' && duet && !duetFinished ? (
+        <DuetTurn
+          session={duet}
+          segments={orderedSegments}
+          characters={scene.characters}
+          currentSegment={duetSegment ?? null}
+          onReset={() => {
+            setDuet(null)
+            recorder.send({ type: 'RESET' })
+          }}
+        />
+      ) : null}
+
+      {takeMode === 'duet' && duet && duetFinished ? (
+        <DuetSummary
+          session={duet}
+          segments={orderedSegments}
+          scoreBySegment={scoreBySegment}
+          onRestart={() => {
+            setDuet(null)
+            recorder.send({ type: 'RESET' })
+          }}
+        />
+      ) : null}
+
+      {takeMode === 'segment' && bySegment && (state.matches('idle') || state.matches('preview')) ? (
         <SegmentNavigator
           segments={orderedSegments}
           characters={scene.characters}
@@ -308,7 +409,7 @@ export function DubPanel({
         <LevelMeter peak={recorder.level} recording={state.matches('recording')} />
       )}
 
-      {state.matches('idle') ? (
+      {state.matches('idle') && !duetFinished && !(takeMode === 'duet' && !duet) ? (
         <div className="flex flex-col gap-3">
           <Button
             size="hero"
@@ -360,7 +461,7 @@ export function DubPanel({
         </p>
       ) : null}
 
-      {state.matches('preview') && recorder.currentAttempt ? (
+      {state.matches('preview') && recorder.currentAttempt && !duetFinished ? (
         <div className="flex flex-col gap-6">
           <div className="flex flex-wrap items-center gap-3">
             <Tag tone="accent">Tentativa {recorder.currentAttempt.attemptNumber}</Tag>
@@ -380,14 +481,33 @@ export function DubPanel({
           ) : null}
 
           <div className="flex flex-wrap gap-3">
-            <Button
-              size="lg"
-              onClick={() => {
-                recorder.retry()
-              }}
-            >
-              Tentar novamente
-            </Button>
+            {/* O bloco inteiro já é escondido quando o dueto fecha, então
+                aqui só importa o modo. */}
+            {takeMode === 'duet' ? (
+              // No dueto o turno já avançou quando o resultado aparece; um
+              // "tentar novamente" aqui gravaria a fala do OUTRO jogador.
+              // A troca de mãos é explícita: o aparelho passa junto do botão.
+              <Button
+                size="lg"
+                data-testid="duet-pass"
+                onClick={() => {
+                  recorder.send({ type: 'RESET' })
+                }}
+              >
+                {duetSegment && duet
+                  ? `Passar a vez — ${segmentOwner(duetSegment, duet.players)?.name ?? 'próximo'}`
+                  : 'Continuar'}
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                onClick={() => {
+                  recorder.retry()
+                }}
+              >
+                Tentar novamente
+              </Button>
+            )}
           </div>
 
           {visibleAttempts.length > 1 ? (
