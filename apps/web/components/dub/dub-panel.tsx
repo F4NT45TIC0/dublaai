@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { DubMode, SceneDetail } from '@dubla/shared'
 import { Button, ErrorState, ScoreCard, Tag } from '@dubla/ui'
 import type { MediaClock } from '@dubla/audio'
@@ -8,13 +8,27 @@ import { useRecorder } from '@/lib/use-recorder'
 import { Countdown } from './countdown'
 import { LevelMeter } from './level-meter'
 import { AttemptPlayback } from './attempt-playback'
+import { SegmentNavigator, type SegmentTakeState } from './segment-navigator'
+
+/** Como a cena é gravada. */
+type TakeMode = 'full' | 'segment'
+
+/**
+ * Folga antes e depois da fala.
+ *
+ * Quem dubla precisa de embalo: entrar exatamente no primeiro fonema é
+ * impossível sem ouvir o que vem antes. A folga entra na janela de análise
+ * também, então o motor compara o mesmo trecho que a pessoa gravou.
+ */
+const LEAD_IN_MS = 700
+const TAIL_MS = 400
 
 export interface DubPanelProps {
   readonly scene: SceneDetail
   readonly featuresUrl: string
   readonly video: HTMLVideoElement | null
   readonly clockRef: React.RefObject<MediaClock | null>
-  readonly onStartVideo: () => Promise<boolean>
+  readonly onStartVideo: (fromMs: number) => Promise<boolean>
   readonly onStopVideo: () => void
   readonly isVideoBuffered: () => boolean
 }
@@ -41,18 +55,96 @@ export function DubPanel({
   onStopVideo,
   isVideoBuffered,
 }: DubPanelProps) {
+  const [takeMode, setTakeMode] = useState<TakeMode>('full')
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState(0)
+
+  const orderedSegments = useMemo(
+    () => [...scene.speakerSegments].sort((a, b) => a.startMs - b.startMs),
+    [scene.speakerSegments],
+  )
+  // Só existe no modo fala-a-fala: quem é  aqui está gravando a
+  // cena inteira, e o TypeScript estreita o resto do componente a partir disto.
+  const activeSegment =
+    takeMode === 'segment'
+      ? (orderedSegments[activeSegmentIndex] ?? orderedSegments[0])
+      : undefined
+  const bySegment = activeSegment !== undefined
+
+  /** Trecho gravado e analisado. Ausente no modo cena inteira. */
+  const analysisWindow = useMemo(() => {
+    if (!activeSegment) return undefined
+    return {
+      startMs: Math.max(0, activeSegment.startMs - LEAD_IN_MS),
+      endMs: Math.min(scene.durationMs, activeSegment.endMs + TAIL_MS),
+    }
+  }, [activeSegment, scene.durationMs])
+
   const recorder = useRecorder({
     sceneId: scene.id,
-    segments: scene.speakerSegments,
+    // No modo fala-a-fala só a fala corrente é pontuada; as outras nem entram
+    // na conta, para que nenhuma nota seja afirmada sobre o que não foi gravado.
+    segments: activeSegment ? [activeSegment] : scene.speakerSegments,
     featuresUrl,
     clockRef,
     onStartVideo,
     onStopVideo,
     isVideoBuffered,
+    ...(analysisWindow === undefined ? {} : { analysisWindow }),
+    ...(activeSegment ? { segmentId: activeSegment.id } : {}),
   })
 
   const { state } = recorder
   const mode = state.context.mode
+  const isRecording = state.matches('recording')
+  const stopRecording = recorder.stop
+
+  /**
+   * Encerra a tomada ao fim da janela da fala.
+   *
+   * No modo cena inteira quem para a gravação é o fim do vídeo. Aqui o vídeo
+   * segue rodando, então o limite precisa ser observado — senão a tomada
+   * invadiria a fala seguinte, que é de outra pessoa.
+   */
+  useEffect(() => {
+    if (!isRecording || !analysisWindow || !video) return
+
+    let rafId = requestAnimationFrame(function tick() {
+      if (video.currentTime * 1000 >= analysisWindow.endMs) {
+        stopRecording()
+        return
+      }
+      rafId = requestAnimationFrame(tick)
+    })
+
+    return () => {
+      cancelAnimationFrame(rafId)
+    }
+  }, [isRecording, analysisWindow, video, stopRecording])
+
+  /** Melhor tomada por fala, para o navegador mostrar o progresso. */
+  const takesBySegment = useMemo(() => {
+    const map: Record<string, SegmentTakeState> = {}
+    for (const attempt of recorder.attempts) {
+      const segmentId = attempt.segmentId
+      if (segmentId === undefined) continue
+      const score = attempt.result?.overall.value ?? null
+      const existing = map[segmentId]
+      const improves =
+        existing === undefined ||
+        (score !== null && (existing.score === null || score > existing.score))
+      if (improves) map[segmentId] = { recorded: true, score }
+    }
+    return map
+  }, [recorder.attempts])
+
+  /** No modo fala-a-fala, o histórico mostrado é o da fala corrente. */
+  const visibleAttempts = useMemo(
+    () =>
+      activeSegment
+        ? recorder.attempts.filter((attempt) => attempt.segmentId === activeSegment.id)
+        : recorder.attempts.filter((attempt) => attempt.segmentId === undefined),
+    [recorder.attempts, activeSegment],
+  )
 
   // §64 — atalhos de teclado. Ignorados quando o foco está num campo de texto.
   useEffect(() => {
@@ -125,6 +217,61 @@ export function DubPanel({
         <Countdown value={state.context.countdown} onCancel={recorder.cancel} />
       ) : null}
 
+      {(state.matches('idle') || state.matches('preview')) && orderedSegments.length > 1 && (
+        <fieldset className="flex flex-col gap-3">
+          <legend className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+            Como gravar
+          </legend>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                { value: 'full', label: 'Cena inteira', hint: 'Uma tomada do começo ao fim.' },
+                {
+                  value: 'segment',
+                  label: 'Fala a fala',
+                  hint: 'Uma tomada por fala, com repetição individual.',
+                },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={takeMode === option.value}
+                data-testid={`take-mode-${option.value}`}
+                onClick={() => {
+                  setTakeMode(option.value)
+                }}
+                className={`min-h-11 border-2 px-4 font-display text-sm uppercase tracking-widest ${
+                  takeMode === option.value
+                    ? 'border-accent bg-accent text-paper'
+                    : 'border-ink-line hover:border-paper'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-sm text-muted">
+            {takeMode === 'segment'
+              ? 'Cada fala é gravada e avaliada separadamente. Você repete só a que não ficou boa.'
+              : 'Uma tomada do começo ao fim da cena.'}
+          </p>
+        </fieldset>
+      )}
+
+      {bySegment && (state.matches('idle') || state.matches('preview')) ? (
+        <SegmentNavigator
+          segments={orderedSegments}
+          characters={scene.characters}
+          activeIndex={activeSegmentIndex}
+          takes={takesBySegment}
+          onSelect={(index) => {
+            setActiveSegmentIndex(index)
+            recorder.send({ type: 'RESET' })
+          }}
+        />
+      ) : null}
+
       {(state.matches('idle') || state.matches('preview')) && (
         <fieldset className="flex flex-col gap-3">
           <legend className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
@@ -170,7 +317,9 @@ export function DubPanel({
               void recorder.requestDub()
             }}
           >
-            ● Dublar esta cena
+            {activeSegment
+              ? `● Dublar a fala ${String(activeSegmentIndex + 1)}`
+              : '● Dublar esta cena'}
           </Button>
           <p className="text-xs text-muted">
             Vamos pedir seu microfone. Nada é enviado — a gravação e a análise acontecem no seu
@@ -216,7 +365,7 @@ export function DubPanel({
           <div className="flex flex-wrap items-center gap-3">
             <Tag tone="accent">Tentativa {recorder.currentAttempt.attemptNumber}</Tag>
             {recorder.bestAttempt?.attemptNumber === recorder.currentAttempt.attemptNumber &&
-            recorder.attempts.length > 1 ? (
+            visibleAttempts.length > 1 ? (
               <Tag tone="ok">Melhor até agora</Tag>
             ) : null}
             {!state.context.continuityOk ? <Tag tone="warn">Aba saiu de foco</Tag> : null}
@@ -241,13 +390,13 @@ export function DubPanel({
             </Button>
           </div>
 
-          {recorder.attempts.length > 1 ? (
+          {visibleAttempts.length > 1 ? (
             <section className="border-t-2 border-ink-line pt-4">
               <h3 className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
                 Suas tentativas
               </h3>
               <ol className="mt-3 flex flex-col gap-1">
-                {recorder.attempts.map((attempt) => (
+                {visibleAttempts.map((attempt) => (
                   <li
                     key={attempt.attemptNumber}
                     className="flex items-baseline justify-between gap-4 border-b border-ink-line py-1"

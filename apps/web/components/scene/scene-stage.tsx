@@ -55,10 +55,12 @@ export function SceneStage({
   }, [])
 
   /** Leva o vídeo ao início e toca. É o t=0 oficial da tentativa. */
-  const startVideo = useCallback(async () => {
+  const startVideo = useCallback(async (fromMs: number) => {
     const player = playerRef.current
     if (!player) return false
-    player.restart()
+    // No modo fala-a-fala a tomada não começa no zero da cena.
+    if (fromMs > 0) player.seekMs(fromMs)
+    else player.restart()
     player.setMuted(true)
     try {
       await player.play()

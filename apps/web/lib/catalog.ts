@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { catalogSchema, type SceneDetail, type SceneSummary } from '@dubla/shared'
+import catalogSource from '../content/catalog.json'
 
 /**
  * Catálogo de cenas.
@@ -13,27 +12,22 @@ import { catalogSchema, type SceneDetail, type SceneSummary } from '@dubla/share
  * ter um bug, e um `startMs` fora da duração produziria score errado em vez de
  * erro visível (§80).
  *
- * O caminho fica dentro da própria app e é montado a partir de literais, para
- * que o bundler consiga rastreá-lo em vez de incluir o projeto inteiro na saída.
+ * O catálogo é IMPORTADO, não lido do disco em runtime.
+ *
+ * A versão anterior montava o caminho com `process.cwd()`, o que amarrava a
+ * aplicação ao diretório de onde o processo foi iniciado: rodar `next start` a
+ * partir da raiz do monorepo — como o Playwright faz — resolvia para
+ * `<raiz>/content/catalog.json`, que não existe, e derrubava `/explorar` em
+ * runtime enquanto as páginas pré-renderizadas continuavam funcionando. Um
+ * import estático não tem cwd: o bundler resolve em build e o arquivo viaja
+ * junto.
  */
-const CATALOG_PATH = join(process.cwd(), 'content', 'catalog.json')
-
 let cache: readonly SceneDetail[] | null = null
 
 function loadCatalog(): readonly SceneDetail[] {
   if (cache) return cache
 
-  let raw: string
-  try {
-    raw = readFileSync(CATALOG_PATH, 'utf8')
-  } catch {
-    throw new Error(
-      'Catálogo não encontrado. Rode `pnpm content:build` para gerar as cenas — ' +
-        'a mídia não é versionada porque é reconstruível a partir de content/scenes.',
-    )
-  }
-
-  const parsed = catalogSchema.safeParse(JSON.parse(raw) as unknown)
+  const parsed = catalogSchema.safeParse(catalogSource)
   if (!parsed.success) {
     const issues = parsed.error.issues
       .slice(0, 10)

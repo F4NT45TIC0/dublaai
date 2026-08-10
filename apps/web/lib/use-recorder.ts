@@ -53,8 +53,13 @@ export interface UseRecorderOptions {
   /** Habilita o envelope do microfone sobre a timeline, sem renders por chunk. */
   readonly liveWaveformDurationMs?: number
   readonly clockRef: React.RefObject<MediaClock | null>
-  /** Leva o vídeo ao início e toca. Devolve `false` se não conseguiu. */
-  readonly onStartVideo: () => Promise<boolean>
+  /**
+   * Posiciona o vídeo em `fromMs` e toca. Devolve `false` se não conseguiu.
+   *
+   * No modo fala-a-fala o início não é zero: cada tomada começa um pouco antes
+   * da própria fala, para a pessoa ter embalo.
+   */
+  readonly onStartVideo: (fromMs: number) => Promise<boolean>
   readonly onStopVideo: () => void
   readonly isVideoBuffered: () => boolean
   /**
@@ -64,11 +69,15 @@ export interface UseRecorderOptions {
    * padrão.
    */
   readonly analysisWindow?: { readonly startMs: number; readonly endMs: number }
+  /** Identifica a fala gravada, para separar as tentativas por segmento. */
+  readonly segmentId?: string
 }
 
 export interface RecorderAttempt {
   readonly id: string
   readonly attemptNumber: number
+  /** Fala coberta, no modo fala-a-fala. Ausente = cena inteira. */
+  readonly segmentId?: string
   readonly wavUrl: string
   readonly durationMs: number
   readonly clock: RecordingClockInfo
@@ -169,6 +178,7 @@ export function useRecorder(options: UseRecorderOptions) {
         restored.push({
           id: entry.id,
           attemptNumber: entry.attemptNumber,
+          ...(entry.segmentId === undefined ? {} : { segmentId: entry.segmentId }),
           wavUrl: url,
           durationMs: entry.durationMs,
           clock: entry.clock,
@@ -393,7 +403,9 @@ export function useRecorder(options: UseRecorderOptions) {
     const attempt = { alive: true }
 
     void (async () => {
-      const started = await optionsRef.current.onStartVideo()
+      const started = await optionsRef.current.onStartVideo(
+        optionsRef.current.analysisWindow?.startMs ?? 0,
+      )
       if (!attempt.alive) return
       if (started) {
         trackEvent('recording_start_success', { sceneId: optionsRef.current.sceneId })
@@ -601,17 +613,29 @@ export function useRecorder(options: UseRecorderOptions) {
 
     const attemptNumber = stateRef.current.context.attempt + 1
     const durationMs = (samples.length / sampleRate) * 1000
-    const attemptId = `${optionsRef.current.sceneId}--${String(attemptNumber)}--${String(Date.now())}`
+    const activeSegmentId = optionsRef.current.segmentId
+    // O id carrega o segmento para que tentativas de falas diferentes nunca
+    // colidam, mesmo com o mesmo número de tentativa.
+    const attemptId = `${optionsRef.current.sceneId}--${activeSegmentId ?? 'cena'}--${String(attemptNumber)}--${String(Date.now())}`
 
     setAttempts((previous) => [
       ...previous,
-      { id: attemptId, attemptNumber, wavUrl, durationMs, clock: clockInfo, result: null },
+      {
+        id: attemptId,
+        attemptNumber,
+        ...(activeSegmentId === undefined ? {} : { segmentId: activeSegmentId }),
+        wavUrl,
+        durationMs,
+        clock: clockInfo,
+        result: null,
+      },
     ])
 
     const stored: StoredAttempt = {
       id: attemptId,
       sceneId: optionsRef.current.sceneId,
       attemptNumber,
+      ...(activeSegmentId === undefined ? {} : { segmentId: activeSegmentId }),
       mode: stateRef.current.context.mode,
       storageKey: `${attemptId}.wav`,
       durationMs,

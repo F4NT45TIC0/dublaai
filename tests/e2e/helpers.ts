@@ -6,6 +6,8 @@ export const SCENE_SLUG = 'dragao-domestico-fogo-na-cozinha'
 export interface StoredAttemptSnapshot {
   readonly id: string
   readonly attemptNumber: number
+  /** Fala coberta, no modo fala-a-fala. Ausente = cena inteira. */
+  readonly segmentId?: string
   readonly durationMs: number
   readonly clock: {
     readonly mediaStartOffsetMs: number
@@ -17,6 +19,7 @@ export interface StoredAttemptSnapshot {
     readonly overall: { value: number | null; status: string }
     readonly metrics: Record<string, { value: number | null; status: string }>
     readonly globalOffsetMs: number
+    readonly segments: readonly { readonly segmentId: string; readonly zone: string }[]
   } | null
 }
 

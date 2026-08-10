@@ -32,6 +32,8 @@ export interface StoredAttempt {
   readonly id: string
   readonly sceneId: string
   readonly attemptNumber: number
+  /** Fala que esta tomada cobre, no modo fala-a-fala. Ausente = cena inteira. */
+  readonly segmentId?: string
   readonly mode: DubMode
   readonly storageKey: string
   readonly durationMs: number
