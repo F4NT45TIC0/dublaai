@@ -1,0 +1,126 @@
+@import 'tailwindcss';
+
+/* Os componentes do design system vivem fora desta app. */
+@source '../../../packages/ui/src';
+
+/**
+ * Design tokens (§5).
+ *
+ * Direção: editorial brutalista — contraste alto, bordas visíveis, raio zero,
+ * sombra dura deslocada, tipografia agressiva. Nada de gradiente, vidro ou
+ * canto arredondado; esses são os tiques que fazem uma interface parecer
+ * template genérico (§4).
+ */
+@theme {
+  /* Superfícies */
+  --color-paper: #f2f0e9;
+  --color-paper-dim: #e6e3d9;
+  --color-ink: #0f0e0c;
+  --color-ink-soft: #1c1a17;
+  --color-ink-line: #2a2724;
+  --color-muted: #8a8580;
+
+  /* Acento único. Um só, porque brutalismo com paleta larga vira carnaval. */
+  --color-accent: #ff3b00;
+  --color-accent-dim: #cc2f00;
+
+  /* Semânticos */
+  --color-ok: #00d9a3;
+  --color-warn: #ffc400;
+  --color-danger: #ff2e5b;
+
+  /* Personagens — espelham packages/shared/src/theme.ts */
+  --color-character-1: #ff3b00;
+  --color-character-2: #00d9a3;
+  --color-character-3: #ffc400;
+  --color-character-4: #8b7bff;
+  --color-character-5: #ff4fa3;
+  --color-character-6: #3bb0ff;
+
+  /* Tipografia */
+  --font-display: var(--font-anton), 'Arial Black', system-ui, sans-serif;
+  --font-body: var(--font-archivo), system-ui, -apple-system, sans-serif;
+
+  --text-mega: clamp(3.5rem, 14vw, 11rem);
+  --text-mega--line-height: 0.82;
+  --text-mega--letter-spacing: -0.03em;
+  --text-giant: clamp(2.5rem, 8vw, 6rem);
+  --text-giant--line-height: 0.86;
+  --text-giant--letter-spacing: -0.02em;
+  --text-title: clamp(1.75rem, 4vw, 3rem);
+  --text-title--line-height: 0.95;
+
+  /* Bordas — grossas e sempre visíveis */
+  --radius-none: 0px;
+  --shadow-hard: 6px 6px 0 var(--color-ink);
+  --shadow-hard-sm: 3px 3px 0 var(--color-ink);
+  --shadow-hard-accent: 6px 6px 0 var(--color-accent);
+
+  /* Transições */
+  --ease-snap: cubic-bezier(0.2, 0.9, 0.2, 1);
+
+  /* Camadas */
+  --z-sticky: 20;
+  --z-overlay: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-ink);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    /* iPhone com notch (§65) */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* O foco precisa ser impossível de perder de vista (§63). */
+  :focus-visible {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 3px;
+  }
+
+  /* §63 — reduced motion não é opcional. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-paper);
+  }
+}
+
+@layer components {
+  /* Superfície escura das telas de dublagem — o foco vai para o vídeo. */
+  .surface-dark {
+    background: var(--color-ink);
+    color: var(--color-paper);
+  }
+
+  .surface-dark * {
+    border-color: var(--color-ink-line);
+  }
+
+  .rule {
+    border-top: 2px solid currentColor;
+  }
+}

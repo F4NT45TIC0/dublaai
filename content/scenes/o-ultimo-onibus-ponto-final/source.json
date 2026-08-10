@@ -1,0 +1,47 @@
+{
+  "slug": "o-ultimo-onibus-ponto-final",
+  "title": "Ponto final",
+  "description": "O motorista do último ônibus da noite tem uma teoria sobre o passageiro que nunca desce.",
+  "difficulty": "easy",
+  "leadInMs": 900,
+  "tailMs": 700,
+  "work": {
+    "slug": "o-ultimo-onibus",
+    "title": "O Último Ônibus",
+    "type": "film",
+    "year": 2026,
+    "synopsis": "Comédia sobre a linha 42, que roda a madrugada inteira e nunca chega ao fim."
+  },
+  "characters": [
+    {
+      "id": "motorista",
+      "name": "MOTORISTA",
+      "colorToken": "character-1",
+      "patternToken": "solid",
+      "voice": { "rate": 0, "pitch": "-8%" }
+    },
+    {
+      "id": "passageiro",
+      "name": "PASSAGEIRO",
+      "colorToken": "character-2",
+      "patternToken": "stripes",
+      "voice": { "rate": 1, "pitch": "+14%" }
+    }
+  ],
+  "lines": [
+    { "characterId": "motorista", "text": "Moço, esse é o ponto final.", "gapBeforeMs": 0 },
+    { "characterId": "passageiro", "text": "Eu sei.", "gapBeforeMs": 420 },
+    { "characterId": "motorista", "text": "Final mesmo. Acabou. Não tem mais depois daqui.", "gapBeforeMs": 380 },
+    { "characterId": "passageiro", "text": "É por isso que eu venho.", "gapBeforeMs": 500 },
+    { "characterId": "motorista", "text": "Todo dia?", "gapBeforeMs": 340 },
+    { "characterId": "passageiro", "text": "Todo dia alguém precisa ver onde as coisas terminam.", "gapBeforeMs": 300 }
+  ],
+  "rights": {
+    "source": "Roteiro original escrito para o Dubla Aí",
+    "owner": "Dubla Aí",
+    "licenseType": "original",
+    "territories": ["*"],
+    "usageRestrictions": "Nenhuma. Conteúdo autoral gerado para desenvolvimento.",
+    "proofReference": "content/scenes/o-ultimo-onibus-ponto-final/source.json"
+  }
+}

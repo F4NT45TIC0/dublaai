@@ -1,0 +1,15 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# esbuild precisa do script de instalação para posicionar o binário nativo
+# usado pelo Vitest.
+allowBuilds:
+  esbuild: true
+
+# Mantém as versões de React alinhadas entre a app e os pacotes de UI.
+# Sem isso, um segundo React no grafo quebra hooks de forma silenciosa.
+peerDependencyRules:
+  allowedVersions:
+    react: '19'
+    react-dom: '19'

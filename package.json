@@ -1,0 +1,45 @@
+{
+  "name": "dubla-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "turbo run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm test:e2e:fixtures && pnpm --filter @dubla/web build && tsx scripts/run-e2e.ts",
+    "content:build": "tsx scripts/generate-mock-scenes.ts",
+    "content:verify": "tsx scripts/verify-scenes.ts",
+    "check:leaks": "pnpm test:e2e:fixtures && pnpm --filter @dubla/web build && tsx scripts/run-e2e.ts tests/e2e/leaks.spec.ts",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "test:e2e:fixtures": "tsx scripts/build-e2e-fixtures.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.10.0",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.0",
+    "globals": "^17.9.0",
+    "prettier": "^3.7.0",
+    "tsx": "^4.21.0",
+    "turbo": "^2.6.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^4.1.10",
+    "@dubla/dsp": "workspace:*",
+    "@dubla/shared": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

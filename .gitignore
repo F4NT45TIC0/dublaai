@@ -1,0 +1,35 @@
+node_modules/
+.pnpm-store/
+
+# builds
+.next/
+out/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# testes
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# mídia gerada — reconstruível com `pnpm content:build`
+apps/web/public/media/
+apps/web/content/catalog.json
+tests/e2e/fixtures/*.wav
+tests/e2e/fixtures/*.mp4
+
+# ambiente
+.env
+.env.*
+!.env.example
+
+# SO / editor
+.DS_Store
+Thumbs.db
+*.log
+.vscode/*
+!.vscode/extensions.json
+.idea/

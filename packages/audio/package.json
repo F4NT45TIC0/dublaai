@@ -1,0 +1,25 @@
+{
+  "name": "@dubla/audio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dubla/dsp": "workspace:*",
+    "@dubla/shared": "workspace:*",
+    "xstate": "^5.32.5"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "jsdom": "^30.0.1",
+    "react": "^19.2.0"
+  }
+}

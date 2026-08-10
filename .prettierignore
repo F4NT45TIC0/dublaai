@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+.next/
+dist/
+coverage/
+apps/web/public/media/
+apps/web/public/audio-worklet/

@@ -1,0 +1,13 @@
+{
+  "name": "@dubla/dsp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/signals.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
