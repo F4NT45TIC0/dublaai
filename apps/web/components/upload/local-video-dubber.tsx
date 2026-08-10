@@ -14,7 +14,7 @@ import { Countdown } from '@/components/dub/countdown'
 import { DuetSetup, DuetSummary, DuetTurn } from '@/components/dub/duet-panel'
 import { LevelMeter } from '@/components/dub/level-meter'
 import { SegmentHud, type SegmentPhase } from '@/components/dub/segment-hud'
-import { SegmentNavigator } from '@/components/dub/segment-navigator'
+import { TakeStrip, type TakeStripCell } from '@/components/dub/take-strip'
 import { StitchedPlayback } from '@/components/dub/stitched-playback'
 import { SubtitleRenderer } from '@/components/scene/subtitle-renderer'
 import { VideoPlayer, type VideoPlayerHandle } from '@/components/scene/video-player'
@@ -45,6 +45,7 @@ import {
 import { decodeVideoMonoAudio, prepareVideoReference } from '@/lib/prepare-video-reference'
 import { assignTranscript, untranscribedCount } from '@/lib/assign-transcript'
 import { transcribeReference } from '@/lib/transcribe-reference'
+import { assignVoice, segmentsFromTranscript } from '@/lib/segments-from-transcript'
 import { isOriginal, type SegmentSource } from '@/lib/segment-sources'
 import { OnlineMatchPanel } from '@/components/dub/online-match-panel'
 import { useOnlineMatch } from '@/lib/use-online-match'
@@ -71,6 +72,8 @@ export function LocalVideoDubber() {
   const abortRef = useRef<AbortController | null>(null)
   const [selected, setSelected] = useState<SelectedVideo | null>(null)
   const [remoteUrl, setRemoteUrl] = useState('')
+  /** O seletor volta à tela só quando a pessoa pede para trocar de vídeo. */
+  const [trocandoVideo, setTrocandoVideo] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [stageLocked, setStageLocked] = useState(false)
@@ -131,6 +134,7 @@ export function LocalVideoDubber() {
       )
       if (selectionRequestRef.current !== request.id) return
 
+      setTrocandoVideo(false)
       setSelected({
         ...metadata,
         id,
@@ -169,6 +173,27 @@ export function LocalVideoDubber() {
     abortRef.current = null
     controller.abort()
     setStatus(null)
+  }
+
+  /**
+   * Abre um vídeo que chegou pronto, sem passar pelo seletor.
+   *
+   * É o caminho do modo online: quem entra numa partida recebe o arquivo do
+   * anfitrião e cai direto na cena, sem ter de achar o mesmo vídeo no próprio
+   * computador.
+   */
+  const adoptFromMatch = (file: File) => {
+    const request = beginSelection('Abrindo o vídeo da partida…')
+    const abrir = async () => {
+      try {
+        await adoptVideo(file, 'file', request)
+      } catch (cause) {
+        showSelectionError(cause, request)
+      } finally {
+        finishSelection(request)
+      }
+    }
+    void abrir()
   }
 
   const selectFile = async (file: File | undefined) => {
@@ -212,9 +237,54 @@ export function LocalVideoDubber() {
     }
   }
 
+  const escolhendo = !selected || trocandoVideo
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="grid gap-5 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
+    /*
+      `pb-32` no celular abre espaço para a barra de comando, que fica presa
+      no rodapé: sem isso ela cobriria o último bloco da página.
+    */
+    <div className="flex flex-col gap-6 pb-32 sm:pb-0">
+      {selected && !escolhendo ? (
+        // Depois que o vídeo entra, o seletor sai da frente. Ele ocupava três
+        // telas de celular acima do que a pessoa veio fazer.
+        <div className="flex flex-wrap items-center justify-between gap-3 border-2 border-ink-line px-4 py-3">
+          <p className="min-w-0 flex-1">
+            <span className="block font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+              Dublando
+            </span>
+            <span className="block truncate font-display text-lg uppercase" title={selected.fileName}>
+              {selected.fileName}
+            </span>
+          </p>
+          <Button
+            variant="secondary"
+            data-testid="trocar-video"
+            onClick={() => {
+              setTrocandoVideo(true)
+            }}
+          >
+            Trocar vídeo
+          </Button>
+        </div>
+      ) : null}
+
+      {escolhendo ? (
+        <header>
+          <p className="font-display text-sm uppercase tracking-[0.2em] text-accent">
+            Arquivo ou URL direta
+          </p>
+          <h1 className="mt-2 max-w-5xl font-display text-giant uppercase">
+            Duble a sua própria cena
+          </h1>
+          <p className="mt-4 max-w-2xl text-base leading-relaxed opacity-80 sm:text-lg">
+            Escolha um vídeo de até 5 minutos ou cole uma URL direta. A gente separa as falas,
+            mostra onde você entrou na hora e devolve o vídeo com a sua voz — tudo no navegador.
+          </p>
+        </header>
+      ) : null}
+
+      <div className={escolhendo ? 'grid gap-5 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch' : 'hidden'}>
         <label
           className="group flex min-h-52 cursor-pointer flex-col items-center justify-center gap-4 border-2 border-dashed border-ink p-6 text-center hover:bg-ink hover:text-paper"
           data-testid="local-video-dropzone"
@@ -314,6 +384,7 @@ export function LocalVideoDubber() {
             key={selected.id}
             selected={selected}
             onInteractionLockChange={setStageLocked}
+            onAdoptVideo={adoptFromMatch}
           />
         </div>
       ) : null}
@@ -324,9 +395,12 @@ export function LocalVideoDubber() {
 function LocalDubStage({
   selected,
   onInteractionLockChange,
+  onAdoptVideo,
 }: {
   selected: SelectedVideo
   onInteractionLockChange: (locked: boolean) => void
+  /** Abre neste aparelho um vídeo que veio de fora — hoje, da partida online. */
+  onAdoptVideo: (file: File) => void
 }) {
   const playerRef = useRef<VideoPlayerHandle | null>(null)
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null)
@@ -352,6 +426,11 @@ function LocalDubStage({
   const segmentsRef = useRef<readonly SpeakerSegment[]>([])
   const takesBySegmentRef = useRef<Record<string, unknown>>({})
   const goToNextPendingRef = useRef<(() => void) | null>(null)
+  const useOriginalRef = useRef<(() => void) | null>(null)
+  const stepSegmentRef = useRef<((delta: number) => void) | null>(null)
+
+  /** Quantos personagens a cena tem. Quem sabe é a pessoa, não o algoritmo. */
+  const [voiceCount, setVoiceCount] = useState(1)
 
   const [takeMode, setTakeMode] = useState<TakeMode>('full')
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0)
@@ -386,6 +465,16 @@ function LocalDubStage({
       })
     },
     [selected.id],
+  )
+
+  /** Passa esta fala para o próximo personagem. */
+  const cycleVoice = useCallback(
+    (segmentId: string) => {
+      setTranscriptSegments((previous) =>
+        previous ? assignVoice(previous, segmentId, voiceCount) : previous,
+      )
+    },
+    [voiceCount],
   )
 
   /** Escreve várias falas de uma vez sem disparar um salvamento por trecho. */
@@ -443,6 +532,16 @@ function LocalDubStage({
     return await decodeVideoMonoAudio(video, selected.durationMs)
   }, [selected.durationMs, selected.url])
 
+  /**
+   * Falas derivadas da transcrição.
+   *
+   * Quando existem, mandam nas do detector de energia: o VAD corta em toda
+   * respiração e produzia frases picadas, impossíveis de dublar. `null` até a
+   * pessoa pedir o reconhecimento.
+   */
+  const [transcriptSegments, setTranscriptSegments] = useState<readonly SpeakerSegment[] | null>(
+    null,
+  )
   const [transcription, setTranscription] = useState<
     | { readonly phase: 'idle' }
     | { readonly phase: 'running'; readonly loadedRatio: number }
@@ -475,6 +574,20 @@ function LocalDubStage({
           },
         )
 
+        // Preferimos recortar a cena pela transcrição: o Whisper corta onde a
+        // FRASE acaba, que é a unidade que se dubla. Só quando ele não entende
+        // nada é que caímos de volta nos trechos do detector de energia.
+        const doTexto = segmentsFromTranscript(chunks, selected.id, selected.durationMs)
+        if (doTexto.length > 0) {
+          setTranscriptSegments(doTexto)
+          const entries: Record<string, string> = {}
+          for (const segment of doTexto) entries[segment.id] = segment.text
+          mergeTexts(entries)
+          setActiveSegmentIndex(0)
+          setTranscription({ phase: 'done', filled: doTexto.length, missing: 0 })
+          return
+        }
+
         const base = orderSegments(reference.segments)
         const described = assignTranscript(base, chunks)
         const missing = untranscribedCount(base, described)
@@ -495,16 +608,16 @@ function LocalDubStage({
     }
 
     void transcribe()
-  }, [mergeTexts, reference, selected.durationMs, selected.url])
+  }, [mergeTexts, reference, selected.durationMs, selected.id, selected.url])
 
   /** Trechos em ordem, com o texto digitado no lugar do rótulo genérico. */
   const orderedSegments = useMemo(() => {
-    const base = reference ? orderSegments(reference.segments) : []
+    const base = transcriptSegments ?? (reference ? orderSegments(reference.segments) : [])
     return base.map((segment) => {
       const typed = texts[segment.id]?.trim()
       return typed !== undefined && typed.length > 0 ? { ...segment, text: typed } : segment
     })
-  }, [reference, texts])
+  }, [reference, texts, transcriptSegments])
 
   /**
    * Personagens derivados das vozes detectadas.
@@ -761,6 +874,24 @@ function LocalDubStage({
   // O atalho de teclado é montado antes desta função existir; o ref costura os
   // dois sem obrigar o efeito a se remontar a cada tomada nova.
   goToNextPendingRef.current = goToNextPending
+  useOriginalRef.current = useOriginalAndAdvance
+  stepSegmentRef.current = (delta: number) => {
+    goToSegment(Math.min(orderedSegments.length - 1, Math.max(0, activeSegmentIndex + delta)))
+  }
+
+  /** O que cada célula da fita mostra. */
+  const stripCells = useMemo(() => {
+    const cells: Record<string, TakeStripCell> = {}
+    for (const segment of orderedSegments) {
+      const take = takesBySegment[segment.id]
+      cells[segment.id] = {
+        recorded: take?.recorded ?? false,
+        score: take?.score ?? null,
+        original: isOriginal(sources, segment.id),
+      }
+    }
+    return cells
+  }, [orderedSegments, takesBySegment, sources])
 
   /** Fase da barra fixa, traduzida da máquina de gravação. */
   const hudPhase: SegmentPhase = state.matches('recording')
@@ -802,6 +933,22 @@ function LocalDubStage({
       if (event.key === 'Escape' && (state.matches('countdown') || state.matches('recording'))) {
         event.preventDefault()
         recorder.cancel()
+        return
+      }
+      // Só valem parados: trocar de fala no meio de uma gravação jogaria a
+      // tomada fora sem a pessoa ter pedido.
+      if (!state.matches('idle') && !state.matches('preview')) return
+
+      const key = event.key.toLowerCase()
+      if (key === 'r') {
+        event.preventDefault()
+        void recorder.requestDub()
+      } else if (key === 'o') {
+        event.preventDefault()
+        useOriginalRef.current?.()
+      } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        event.preventDefault()
+        stepSegmentRef.current?.(event.key === 'ArrowRight' ? 1 : -1)
       }
     }
 
@@ -871,12 +1018,16 @@ function LocalDubStage({
           countdown={state.context.countdown}
           isOriginal={isOriginal(sources, activeSegment.id)}
           allDone={nextPendingSegmentIndex(activeSegmentIndex, takesBySegment) === -1}
+          bestScore={scoreBySegment[activeSegment.id] ?? null}
           disabled={exportingVideo}
           onRecord={() => {
             void recorder.requestDub()
           }}
           onStop={recorder.stop}
           onNext={goToNextPending}
+          onRetry={() => {
+            void recorder.requestDub()
+          }}
           onToggleOriginal={useOriginalAndAdvance}
         />
       ) : null}
@@ -891,6 +1042,16 @@ function LocalDubStage({
           recorder.send({ type: 'VIDEO_ENDED' })
         }}
       />
+
+      {takeMode === 'segment' && activeSegment ? (
+        <TakeStrip
+          segments={orderedSegments}
+          cells={stripCells}
+          activeIndex={activeSegmentIndex}
+          disabled={!state.matches('idle') && !state.matches('preview')}
+          onSelect={goToSegment}
+        />
+      ) : null}
 
       {subtitles.length > 0 ? (
         <SubtitleRenderer
@@ -1108,6 +1269,45 @@ function LocalDubStage({
                 </p>
               ) : null}
 
+              {transcriptSegments ? (
+                <div className="flex flex-wrap items-center gap-3 border-2 border-ink-line p-3">
+                  <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+                    Quantos personagens falam
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {([1, 2, 3, 4] as const).map((quantidade) => (
+                      <button
+                        key={quantidade}
+                        type="button"
+                        aria-pressed={voiceCount === quantidade}
+                        data-testid={`vozes-${String(quantidade)}`}
+                        onClick={() => {
+                          setVoiceCount(quantidade)
+                        }}
+                        className={`min-h-11 min-w-11 border-2 font-display text-sm uppercase ${
+                          voiceCount === quantidade
+                            ? 'border-accent bg-accent text-paper'
+                            : 'border-ink-line text-muted hover:border-paper hover:text-paper'
+                        }`}
+                      >
+                        {quantidade}
+                      </button>
+                    ))}
+                  </div>
+                  {/*
+                    A separação é manual porque agrupar vozes por timbre exige
+                    um modelo que não temos. O que havia antes chutava e errava
+                    tanto que dividia a mesma pessoa em quatro personagens —
+                    um toque por fala é mais rápido do que corrigir isso.
+                  */}
+                  <p className="w-full text-xs text-muted">
+                    {voiceCount === 1
+                      ? 'Uma voz só. Aumente aqui se a cena tem mais de um personagem falando.'
+                      : 'Toque no personagem ao lado de cada fala para dizer de quem ela é.'}
+                  </p>
+                </div>
+              ) : null}
+
               {orderedSegments.map((segment, index) => {
                 const usaOriginal = isOriginal(sources, segment.id)
                 return (
@@ -1117,6 +1317,20 @@ function LocalDubStage({
                         {index + 1}. {formatTimecode(segment.startMs)} –{' '}
                         {formatTimecode(segment.endMs)}
                       </span>
+                      {transcriptSegments && voiceCount > 1 ? (
+                        <button
+                          type="button"
+                          data-testid={`fala-voz-${String(index)}`}
+                          title="Trocar o personagem desta fala"
+                          onClick={() => {
+                            cycleVoice(segment.id)
+                          }}
+                          className="min-h-11 border-2 border-ink-line px-2 font-display text-[0.625rem] uppercase tracking-widest text-paper hover:border-paper"
+                        >
+                          {segment.characterId.replace('voz-', 'Voz ')}
+                        </button>
+                      ) : null}
+
                       {takeMode === 'segment' ? (
                         <button
                           type="button"
@@ -1125,7 +1339,7 @@ function LocalDubStage({
                           onClick={() => {
                             toggleSource(segment.id)
                           }}
-                          className={`border-2 px-2 py-1 font-display text-[0.625rem] uppercase tracking-widest ${
+                          className={`min-h-11 border-2 px-3 font-display text-[0.625rem] uppercase tracking-widest ${
                             usaOriginal
                               ? 'border-accent bg-accent text-paper'
                               : 'border-ink-line text-muted hover:border-paper hover:text-paper'
@@ -1155,16 +1369,6 @@ function LocalDubStage({
               })}
             </div>
           </details>
-        ) : null}
-
-        {takeMode === 'segment' && activeSegment && (state.matches('idle') || state.matches('preview')) ? (
-          <SegmentNavigator
-            segments={orderedSegments}
-            characters={characters}
-            activeIndex={activeSegmentIndex}
-            takes={takesBySegment}
-            onSelect={goToSegment}
-          />
         ) : null}
 
         {takeMode === 'duet' && !duet ? (
@@ -1207,6 +1411,8 @@ function LocalDubStage({
             match={match}
             characters={characters}
             videoName={selected.fileName}
+            loadVideoBlob={async () => await (await fetch(selected.url)).blob()}
+            onAdoptVideo={onAdoptVideo}
           />
         ) : null}
 

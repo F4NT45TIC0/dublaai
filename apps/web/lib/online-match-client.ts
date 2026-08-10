@@ -84,6 +84,33 @@ export async function sendTake(
   return ((await response.json()) as { state: MatchState }).state
 }
 
+/** Envia o vídeo da cena para a partida. Só o anfitrião faz isso, uma vez. */
+export async function shareMatchVideo(
+  code: string,
+  playerId: string,
+  video: Blob,
+  fileName: string,
+): Promise<MatchState> {
+  const form = new FormData()
+  form.set('playerId', playerId)
+  form.set('video', video, fileName)
+
+  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}/video`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!response.ok) throw new Error(await readError(response))
+  return ((await response.json()) as { state: MatchState }).state
+}
+
+/** Baixa o vídeo que o anfitrião guardou, para quem entrou depois. */
+export async function pullMatchVideo(code: string, fileName: string): Promise<File> {
+  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}/video`)
+  if (!response.ok) throw new Error(await readError(response))
+  const blob = await response.blob()
+  return new File([blob], fileName, { type: blob.type || 'video/mp4' })
+}
+
 /**
  * Identidade do jogador neste aparelho.
  *

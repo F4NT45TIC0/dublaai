@@ -42,6 +42,14 @@ export interface MatchState {
   readonly segments: readonly MatchSegment[]
   readonly players: readonly MatchPlayer[]
   readonly takes: Readonly<Record<string, MatchTake | undefined>>
+  /**
+   * O anfitrião guardou o vídeo na partida.
+   *
+   * Quando verdadeiro, quem entra baixa o arquivo em vez de precisar tê-lo:
+   * combinar "abra exatamente o mesmo arquivo" por fora era a parte mais chata
+   * de começar a jogar.
+   */
+  readonly videoShared?: boolean
   readonly createdAt: number
   readonly updatedAt: number
 }
@@ -97,7 +105,9 @@ export function joinMatch(
   if (isExpired(state, now)) {
     return { ok: false, reason: 'Esta partida expirou. Crie uma nova para continuar.' }
   }
-  if (state.videoId !== videoId) {
+  // Com o vídeo guardado na partida, os dois lados têm o mesmo arquivo por
+  // construção — a conferência só faz sentido quando cada um trouxe o seu.
+  if (state.videoShared !== true && state.videoId !== videoId) {
     return {
       ok: false,
       reason:

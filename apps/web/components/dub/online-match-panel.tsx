@@ -11,6 +11,10 @@ export interface OnlineMatchPanelProps {
   readonly match: OnlineMatch
   readonly characters: readonly Character[]
   readonly videoName: string
+  /** Entrega o vídeo aberto aqui, para subir junto com a partida. */
+  readonly loadVideoBlob?: () => Promise<Blob | null>
+  /** Abre neste aparelho o vídeo que veio da partida. */
+  readonly onAdoptVideo?: (file: File) => void
 }
 
 function characterName(characters: readonly Character[], id: string): string {
@@ -24,7 +28,13 @@ function characterName(characters: readonly Character[], id: string): string {
  * em todo o resto do Dubla Aí nada é enviado, e essa é a única exceção. Quem
  * escolhe jogar online precisa saber disso antes de gravar, não depois.
  */
-export function OnlineMatchPanel({ match, characters, videoName }: OnlineMatchPanelProps) {
+export function OnlineMatchPanel({
+  match,
+  characters,
+  videoName,
+  loadVideoBlob,
+  onAdoptVideo,
+}: OnlineMatchPanelProps) {
   const [codeInput, setCodeInput] = useState('')
   const [name, setName] = useState('')
   const [characterId, setCharacterId] = useState('')
@@ -43,9 +53,9 @@ export function OnlineMatchPanel({ match, characters, videoName }: OnlineMatchPa
         <div>
           <h3 className="font-display text-lg uppercase">Jogar com um amigo à distância</h3>
           <p className="mt-1 text-sm text-muted">
-            Cada um abre <strong>o mesmo arquivo de vídeo</strong> no próprio computador. O vídeo
-            não é enviado — só as falas gravadas viajam, para que a outra pessoa possa ouvir a sua
-            antes de responder. Elas ficam guardadas por 24 horas e depois somem.
+            Só você precisa ter o vídeo: ele vai junto com a partida e a outra pessoa recebe
+            automaticamente ao entrar com o código. As falas gravadas também viajam, para que cada
+            um ouça a do outro antes de responder. Tudo some depois de 24 horas.
           </p>
         </div>
 
@@ -54,13 +64,18 @@ export function OnlineMatchPanel({ match, characters, videoName }: OnlineMatchPa
             data-testid="online-criar"
             disabled={match.busy}
             onClick={() => {
-              void match.create()
+              const criar = async () => {
+                const video = loadVideoBlob ? await loadVideoBlob() : null
+                await match.create(video ?? undefined)
+              }
+              void criar()
             }}
           >
             {match.busy ? 'Criando…' : 'Criar partida'}
           </Button>
           <p className="text-xs text-muted">
-            Você recebe um código para mandar para quem vai jogar com você.
+            Você recebe um código para mandar para quem vai jogar com você. Vídeos de até 200 MB
+            vão junto; acima disso, a outra pessoa precisa abrir o mesmo arquivo.
           </p>
         </div>
 
@@ -115,6 +130,28 @@ export function OnlineMatchPanel({ match, characters, videoName }: OnlineMatchPa
             Partida <strong>{formatMatchCode(state.code)}</strong> · {state.videoName}
           </p>
         </div>
+
+        {state.videoShared && onAdoptVideo ? (
+          <div className="flex flex-col gap-2 border-2 border-ink-line p-3">
+            <p className="text-sm">
+              Esta partida traz o vídeo. Baixe para dublar a mesma cena que a outra pessoa.
+            </p>
+            <Button
+              variant="secondary"
+              disabled={match.busy}
+              data-testid="online-baixar-video"
+              onClick={() => {
+                const baixar = async () => {
+                  const file = await match.pullVideo()
+                  if (file) onAdoptVideo(file)
+                }
+                void baixar()
+              }}
+            >
+              {match.busy ? 'Baixando…' : 'Baixar o vídeo da partida'}
+            </Button>
+          </div>
+        ) : null}
 
         <label className="flex flex-col gap-1">
           <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">

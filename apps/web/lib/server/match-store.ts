@@ -20,6 +20,9 @@ export interface MatchStore {
   putAudio(code: string, segmentId: string, bytes: ArrayBuffer): Promise<string>
   /** Devolve o WAV guardado, ou `null` se ele não existe. */
   readAudio(code: string, segmentId: string): Promise<ArrayBuffer | null>
+  /** Guarda o vídeo da partida, para quem entrar depois baixar. */
+  putVideo(code: string, bytes: ArrayBuffer): Promise<void>
+  readVideo(code: string): Promise<ArrayBuffer | null>
 }
 
 export class MatchStoreUnavailable extends Error {
@@ -75,6 +78,7 @@ async function fetchBlob(url: string): Promise<Response> {
 function blobStore(): MatchStore {
   const statePath = (code: string) => `partidas/${code}/estado.json`
   const audioPath = (code: string, segmentId: string) => `partidas/${code}/${segmentId}.wav`
+  const videoPath = (code: string) => `partidas/${code}/cena.mp4`
 
   return {
     async read(code) {
@@ -134,6 +138,31 @@ function blobStore(): MatchStore {
         return null
       }
     },
+
+    async putVideo(code, bytes) {
+      const { put } = await import('@vercel/blob')
+      await putWithDetectedAccess(
+        async (access) =>
+          await put(videoPath(code), bytes, {
+            access,
+            contentType: 'video/mp4',
+            addRandomSuffix: false,
+            allowOverwrite: true,
+          }),
+      )
+    },
+
+    async readVideo(code) {
+      const { head } = await import('@vercel/blob')
+      try {
+        const meta = await head(videoPath(code))
+        const response = await fetchBlob(meta.url)
+        if (!response.ok) return null
+        return await response.arrayBuffer()
+      } catch {
+        return null
+      }
+    },
   }
 }
 
@@ -170,13 +199,26 @@ function fileStore(): MatchStore {
     },
 
     async readAudio(code, segmentId) {
-      try {
-        const bytes = await readFile(join(dir(code), `${segmentId}.wav`))
-        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-      } catch {
-        return null
-      }
+      return await lerArquivo(join(dir(code), `${segmentId}.wav`))
     },
+
+    async putVideo(code, bytes) {
+      await mkdir(dir(code), { recursive: true })
+      await writeFile(join(dir(code), 'cena.mp4'), Buffer.from(bytes))
+    },
+
+    async readVideo(code) {
+      return await lerArquivo(join(dir(code), 'cena.mp4'))
+    },
+  }
+}
+
+async function lerArquivo(caminho: string): Promise<ArrayBuffer | null> {
+  try {
+    const bytes = await readFile(caminho)
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  } catch {
+    return null
   }
 }
 

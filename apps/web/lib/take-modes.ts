@@ -1,6 +1,10 @@
 import type { SpeakerSegment } from '@dubla/shared'
 import type { RecorderAttempt } from './use-recorder'
-import type { SegmentTakeState } from '@/components/dub/segment-navigator'
+/** Estado de uma fala: se já foi gravada e a melhor nota obtida nela. */
+export interface SegmentTakeState {
+  readonly recorded: boolean
+  readonly score: number | null
+}
 
 /**
  * Regras compartilhadas entre os painéis de gravação (catálogo e Meu vídeo).

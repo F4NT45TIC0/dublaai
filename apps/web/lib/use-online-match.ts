@@ -8,7 +8,9 @@ import {
   joinMatchRemote,
   localPlayerId,
   MATCH_POLL_MS,
+  pullMatchVideo,
   sendTake,
+  shareMatchVideo,
 } from '@/lib/online-match-client'
 import {
   currentPlayer,
@@ -36,7 +38,9 @@ export interface OnlineMatch {
   readonly myTurn: boolean
   readonly complete: boolean
   readonly waitingFor: string | null
-  create: () => Promise<string | null>
+  create: (video?: Blob) => Promise<string | null>
+  /** Baixa o vídeo guardado na partida. `null` quando não há. */
+  pullVideo: () => Promise<File | null>
   /** Carrega uma partida pelo código, sem ainda ocupar personagem. */
   peek: (code: string) => Promise<boolean>
   join: (code: string, name: string, characterId: string) => Promise<boolean>
@@ -99,20 +103,55 @@ export function useOnlineMatch(scene: OnlineMatchScene): OnlineMatch {
     }
   }, [code, complete])
 
-  const create = useCallback(async () => {
+  const create = useCallback(
+    async (video?: Blob) => {
+      setBusy(true)
+      setError(null)
+      try {
+        const result = await createMatch(scene)
+        setState(result.state)
+
+        // O vídeo vai junto para que a outra pessoa não precise ter o arquivo.
+        // Se ele for grande demais, a partida continua de pé — só volta a
+        // exigir que os dois abram o mesmo arquivo.
+        if (video) {
+          try {
+            setState(
+              await shareMatchVideo(result.state.code, playerId, video, scene.videoName),
+            )
+          } catch (cause) {
+            setError(
+              cause instanceof Error
+                ? `${cause.message} A partida foi criada mesmo assim.`
+                : 'Não conseguimos enviar o vídeo. A partida foi criada mesmo assim.',
+            )
+          }
+        }
+        return result.code
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'Não conseguimos criar a partida.')
+        return null
+      } finally {
+        setBusy(false)
+      }
+    },
+    [playerId, scene],
+  )
+
+  const pullVideo = useCallback(async () => {
+    const atual = stateRef.current
+    if (!atual?.videoShared) return null
     setBusy(true)
     setError(null)
     try {
-      const result = await createMatch(scene)
-      setState(result.state)
-      return result.code
+      return await pullMatchVideo(atual.code, atual.videoName)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Não conseguimos criar a partida.')
+      setError(cause instanceof Error ? cause.message : 'Não conseguimos baixar o vídeo da partida.')
       return null
     } finally {
       setBusy(false)
     }
-  }, [scene])
+  }, [])
 
   const peek = useCallback(async (rawCode: string) => {
     const normalized = normalizeMatchCode(rawCode)
@@ -208,6 +247,7 @@ export function useOnlineMatch(scene: OnlineMatchScene): OnlineMatch {
     complete,
     waitingFor: waiting && waiting.id !== playerId ? waiting.name : null,
     create,
+    pullVideo,
     peek,
     join,
     submit,

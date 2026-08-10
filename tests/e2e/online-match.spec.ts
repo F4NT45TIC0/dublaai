@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 
@@ -89,27 +90,48 @@ test.describe('partida online', () => {
     }
   })
 
-  test('recusa quem chega com outro arquivo de vídeo', async ({ page, request }) => {
-    await abrirVideo(page)
-    await page.getByTestId('online-criar').click()
-    await expect(page.getByTestId('online-escolher-personagem')).toBeVisible({ timeout: 30_000 })
-
-    const texto = await page.getByTestId('online-escolher-personagem').innerText()
-    const codigo = /([0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4})/.exec(
-      texto,
-    )?.[1]
-
-    // O vídeo não trafega, então a única defesa contra dublar cenas diferentes
-    // é a impressão digital do arquivo — conferida no servidor.
-    const resposta = await request.post(`/api/partidas/${codigo ?? ''}`, {
+  test('o vídeo viaja com a partida: só um dos dois precisa ter o arquivo', async ({
+    request,
+  }) => {
+    const criada = await request.post('/api/partidas', {
       data: {
-        playerId: 'intruso',
-        name: 'Intruso',
-        characterId: 'voz-2',
-        videoId: 'arquivo-completamente-outro',
+        videoId: 'video-do-anfitriao',
+        videoName: 'cena.mp4',
+        durationMs: 10_000,
+        segments: [
+          { id: 's1', characterId: 'voz-1', startMs: 0, endMs: 2_000, text: 'a' },
+          { id: 's2', characterId: 'voz-2', startMs: 2_500, endMs: 4_000, text: 'b' },
+        ],
       },
     })
-    expect(resposta.status()).toBe(409)
-    expect(await resposta.text()).toContain('mesmo arquivo')
+    expect(criada.ok()).toBe(true)
+    const { code } = (await criada.json()) as { code: string }
+
+    // Sem vídeo guardado, chegar com outro arquivo continua sendo recusado:
+    // seria dublar cenas diferentes achando que é a mesma.
+    const semVideo = await request.post(`/api/partidas/${code}`, {
+      data: { playerId: 'intruso', name: 'Intruso', characterId: 'voz-2', videoId: 'outro' },
+    })
+    expect(semVideo.status()).toBe(409)
+    expect(await semVideo.text()).toContain('mesmo arquivo')
+
+    // Com o vídeo na partida, quem entra recebe o arquivo e a conferência
+    // deixa de fazer sentido — os dois passam a ter o mesmo material.
+    const enviado = await request.post(`/api/partidas/${code}/video`, {
+      multipart: {
+        playerId: 'anfitriao',
+        video: { name: 'cena.mp4', mimeType: 'video/mp4', buffer: readFileSync(VALID_VIDEO) },
+      },
+    })
+    expect(enviado.ok()).toBe(true)
+
+    const entrada = await request.post(`/api/partidas/${code}`, {
+      data: { playerId: 'convidado', name: 'Bia', characterId: 'voz-2', videoId: 'outro' },
+    })
+    expect(entrada.ok()).toBe(true)
+
+    const baixado = await request.get(`/api/partidas/${code}/video`)
+    expect(baixado.ok()).toBe(true)
+    expect(Buffer.from(await baixado.body()).equals(readFileSync(VALID_VIDEO))).toBe(true)
   })
 })
