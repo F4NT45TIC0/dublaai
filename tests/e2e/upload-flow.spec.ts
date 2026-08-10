@@ -151,6 +151,31 @@ test.describe('arquivo ou URL de vídeo', () => {
     })
   })
 
+  test('falas digitadas viram legenda e o modo fala-a-fala grava um trecho', async ({ page }) => {
+    await page.goto('/enviar')
+    await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
+    await expect(
+      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
+    ).toBeVisible({ timeout: 60_000 })
+
+    // A pessoa digita a fala do primeiro trecho — nada é transcrito sozinho.
+    const editor = page.locator('summary', { hasText: 'Falas da cena' })
+    await editor.click()
+    await page.getByTestId('local-fala-0').fill('Olá, mundo da dublagem!')
+    await expect(editor).toContainText('1 de')
+
+    // Modo fala-a-fala: grava só o primeiro trecho e encerra sozinho.
+    await page.getByTestId('local-take-mode-segment').click()
+    await expect(page.getByTestId('local-start-dub')).toContainText('Dublar o trecho 1')
+
+    await page.getByTestId('local-start-dub').click()
+    await waitForLocalState(page, 'recording', 40_000)
+    await waitForLocalState(page, 'preview', 40_000)
+
+    // E a cena completa costurada fica disponível.
+    await expect(page.getByTestId('stitched-playback')).toContainText('1 fala montada')
+  })
+
   test('vídeo sem áudio continua disponível sem inventar pontuação', async ({ page }) => {
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(NO_AUDIO_VIDEO)

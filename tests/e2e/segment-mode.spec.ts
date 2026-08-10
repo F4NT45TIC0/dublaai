@@ -69,6 +69,40 @@ test.describe('modo fala-a-fala', () => {
     await waitForState(page, 'preview', 40_000)
   })
 
+  test('a cena inteira pode ser ouvida com as tomadas costuradas', async ({ page }) => {
+    await openScene(page)
+    await page.getByTestId('take-mode-segment').click()
+
+    // Grava as duas primeiras falas.
+    await page.getByTestId('start-dub').click()
+    await waitForState(page, 'preview', 40_000)
+    await page.getByRole('button', { name: /^2./ }).click()
+    await waitForState(page, 'idle')
+    await page.getByTestId('start-dub').click()
+    await waitForState(page, 'preview', 40_000)
+
+    // Este era o bug: ao acabar o fala-a-fala, só o trecho selecionado tocava.
+    const stitched = page.getByTestId('stitched-playback')
+    await expect(stitched).toContainText('2 falas montadas')
+    await page.getByTestId('stitched-build').click()
+    await expect(stitched.getByRole('button', { name: /Ouvir com o vídeo/i })).toBeVisible({
+      timeout: 20_000,
+    })
+
+    // A trilha costurada cobre a cena INTEIRA, não a janela de uma fala.
+    const durations = await stitched.locator('audio').evaluate(async (element) => {
+      const audio = element as HTMLAudioElement
+      if (!Number.isFinite(audio.duration)) {
+        await new Promise<void>((resolve) => {
+          audio.addEventListener('loadedmetadata', () => { resolve() }, { once: true })
+        })
+      }
+      const video = document.querySelector('video')
+      return { audio: audio.duration, video: video ? video.duration : -1 }
+    })
+    expect(Math.abs(durations.audio - durations.video)).toBeLessThan(0.5)
+  })
+
   test('cada fala guarda a própria tomada', async ({ page }) => {
     await openScene(page)
     await page.getByTestId('take-mode-segment').click()

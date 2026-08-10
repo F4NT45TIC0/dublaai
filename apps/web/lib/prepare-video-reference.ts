@@ -1,7 +1,7 @@
 'use client'
 
 import type { SpeakerSegment } from '@dubla/shared'
-import type { ReferenceRequest, ReferenceResponse } from '@/workers/reference.worker'
+import type { ReferenceRequest, ReferenceResponse, SpeakerDetection } from '@/workers/reference.worker'
 
 export interface PreparedVideoReference {
   readonly status: 'ready'
@@ -9,6 +9,8 @@ export interface PreparedVideoReference {
   readonly peaks: Int8Array
   readonly segments: readonly SpeakerSegment[]
   readonly speechRatio: number
+  /** Estimativa de quantas pessoas falam. Corrigível pela pessoa, nunca fato. */
+  readonly speakers: SpeakerDetection
 }
 
 export interface UnavailableVideoReference {
@@ -111,6 +113,7 @@ function analyzeReference(
         peaks: event.data.peaks,
         segments: event.data.segments,
         speechRatio: event.data.speechRatio,
+        speakers: event.data.speakers,
       })
     }
     const onError = (event: ErrorEvent) => {

@@ -15,9 +15,8 @@ playwright-report/
 blob-report/
 .playwright/
 
-# mídia gerada — reconstruível com `pnpm content:build`
-apps/web/public/media/
-apps/web/content/catalog.json
+# A mídia gerada e o catálogo SÃO versionados: a Vercel não tem SAPI nem
+# ffmpeg para reconstruí-los no build. Regenerar local: pnpm content:build.
 tests/e2e/fixtures/*.wav
 tests/e2e/fixtures/*.mp4
 

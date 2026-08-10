@@ -1,14 +1,34 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMediaClock } from '@dubla/audio'
-import { formatTimecode } from '@dubla/shared'
+import { formatTimecode, type Character, type SubtitleSegment } from '@dubla/shared'
 import { Button, ErrorState, ScoreCard, Tag } from '@dubla/ui'
 import { AttemptPlayback } from '@/components/dub/attempt-playback'
 import { Countdown } from '@/components/dub/countdown'
+import { DuetSetup, DuetSummary, DuetTurn } from '@/components/dub/duet-panel'
 import { LevelMeter } from '@/components/dub/level-meter'
+import { SegmentNavigator } from '@/components/dub/segment-navigator'
+import { StitchedPlayback } from '@/components/dub/stitched-playback'
+import { SubtitleRenderer } from '@/components/scene/subtitle-renderer'
 import { VideoPlayer, type VideoPlayerHandle } from '@/components/scene/video-player'
 import { Waveform } from '@/components/scene/waveform'
+import {
+  isComplete,
+  MIN_DUET_CHARACTERS,
+  nextPendingIndex,
+  playableSegments,
+  recordTake,
+  segmentOwner,
+  type DuetSession,
+} from '@/lib/duet-session'
+import {
+  analysisWindowFor,
+  bestScoreBySegment,
+  orderSegments,
+  takeStatesBySegment,
+  type TakeMode,
+} from '@/lib/take-modes'
 import { useRecorder } from '@/lib/use-recorder'
 import {
   createLocalVideoId,
@@ -310,6 +330,109 @@ function LocalDubStage({
   const unavailableReason =
     selected.reference.status === 'unavailable' ? selected.reference.reason : null
 
+  const [takeMode, setTakeMode] = useState<TakeMode>('full')
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState(0)
+  const [duet, setDuet] = useState<DuetSession | null>(null)
+
+  /**
+   * Falas digitadas pela pessoa, por trecho detectado.
+   *
+   * Não existe transcrição automática aqui — o projeto decidiu não usar STT, e
+   * mandar o áudio para um serviço externo quebraria a promessa de que nada
+   * sai do aparelho. O texto vem de quem conhece a cena, e fica guardado por
+   * vídeo para sobreviver a recarregar a página.
+   */
+  const [texts, setTexts] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem(`dublaai:falas:${selected.id}`)
+      return raw ? (JSON.parse(raw) as Record<string, string>) : {}
+    } catch {
+      return {}
+    }
+  })
+  const updateText = useCallback(
+    (segmentId: string, text: string) => {
+      setTexts((previous) => {
+        const next = { ...previous, [segmentId]: text }
+        try {
+          localStorage.setItem(`dublaai:falas:${selected.id}`, JSON.stringify(next))
+        } catch {
+          // Sem espaço para guardar não pode impedir de digitar.
+        }
+        return next
+      })
+    },
+    [selected.id],
+  )
+
+  /** Trechos em ordem, com o texto digitado no lugar do rótulo genérico. */
+  const orderedSegments = useMemo(() => {
+    const base = reference ? orderSegments(reference.segments) : []
+    return base.map((segment) => {
+      const typed = texts[segment.id]?.trim()
+      return typed !== undefined && typed.length > 0 ? { ...segment, text: typed } : segment
+    })
+  }, [reference, texts])
+
+  /**
+   * Personagens derivados das vozes detectadas.
+   *
+   * A detecção é estimativa (vozes parecidas e música quebram o método), por
+   * isso os nomes são genéricos e as falas continuam funcionando mesmo que a
+   * contagem esteja errada.
+   */
+  const characters = useMemo<Character[]>(() => {
+    const ids = [...new Set(orderedSegments.map((segment) => segment.characterId))]
+    const patterns = ['solid', 'stripes', 'dots', 'grid'] as const
+    return ids.map((id, index) => ({
+      id,
+      workId: selected.id,
+      name: id === 'reference-voice' ? 'VOZ' : `VOZ ${id.replace('voz-', '')}`,
+      colorToken: `character-${String((index % 6) + 1)}`,
+      patternToken: patterns[index % patterns.length] ?? 'solid',
+    }))
+  }, [orderedSegments, selected.id])
+
+  const duetAvailable = characters.length >= MIN_DUET_CHARACTERS
+
+  /** No dueto, a fala da vez é decidida pelo rodízio, não pela pessoa. */
+  const duetSegment = useMemo(() => {
+    if (takeMode !== 'duet' || !duet) return undefined
+    const playable = playableSegments(orderedSegments, duet.players)
+    const index = nextPendingIndex(orderedSegments, duet)
+    return index === -1 ? undefined : playable[index]
+  }, [takeMode, duet, orderedSegments])
+
+  const duetFinished = takeMode === 'duet' && duet !== null && isComplete(orderedSegments, duet)
+
+  const activeSegment =
+    takeMode === 'segment'
+      ? (orderedSegments[activeSegmentIndex] ?? orderedSegments[0])
+      : takeMode === 'duet'
+        ? duetSegment
+        : undefined
+
+  const analysisWindow = useMemo(
+    () => (activeSegment ? analysisWindowFor(activeSegment, selected.durationMs) : undefined),
+    [activeSegment, selected.durationMs],
+  )
+
+  /** Legendas sincronizadas: só os trechos em que a pessoa digitou o texto. */
+  const subtitles = useMemo<SubtitleSegment[]>(
+    () =>
+      orderedSegments
+        .filter((segment) => texts[segment.id]?.trim())
+        .map((segment) => ({
+          id: `${segment.id}--sub`,
+          sceneId: selected.id,
+          speakerSegmentId: segment.id,
+          startMs: segment.startMs,
+          endMs: segment.endMs,
+          text: segment.text,
+        })),
+    [orderedSegments, texts, selected.id],
+  )
+
   const startVideo = useCallback(async (fromMs: number) => {
     const player = playerRef.current
     if (!player) return false
@@ -346,7 +469,9 @@ function LocalDubStage({
 
   const recorder = useRecorder({
     sceneId: selected.id,
-    segments: reference?.segments ?? [],
+    // Nos modos por fala, só a fala corrente é pontuada; nada é afirmado
+    // sobre o que a pessoa não gravou.
+    segments: activeSegment ? [activeSegment] : orderedSegments,
     referenceFeatures: reference?.referenceFeatures,
     skipAnalysis: reference === null,
     liveWaveformDurationMs: selected.durationMs,
@@ -354,9 +479,48 @@ function LocalDubStage({
     onStartVideo: startVideo,
     onStopVideo: stopVideo,
     isVideoBuffered,
+    ...(analysisWindow === undefined ? {} : { analysisWindow }),
+    ...(activeSegment ? { segmentId: activeSegment.id } : {}),
   })
 
   const { state } = recorder
+  const isRecording = state.matches('recording')
+  const stopRecording = recorder.stop
+
+  /**
+   * Encerra a tomada ao fim da janela da fala (o vídeo segue rodando; sem
+   * este limite, a tomada invadiria a fala seguinte).
+   */
+  useEffect(() => {
+    if (!isRecording || !analysisWindow || !videoElement) return
+    let rafId = requestAnimationFrame(function tick() {
+      if (videoElement.currentTime * 1000 >= analysisWindow.endMs) {
+        stopRecording()
+        return
+      }
+      rafId = requestAnimationFrame(tick)
+    })
+    return () => {
+      cancelAnimationFrame(rafId)
+    }
+  }, [isRecording, analysisWindow, videoElement, stopRecording])
+
+  /** Registra a tomada no dueto e passa a vez (§100: inaudível não consome turno). */
+  useEffect(() => {
+    if (takeMode !== 'duet' || !duet || !duetSegment) return
+    const owner = segmentOwner(duetSegment, duet.players)
+    if (!owner) return
+    if (!recorder.attempts.some((attempt) => attempt.segmentId === duetSegment.id)) return
+    setDuet((current) =>
+      current && current.takes[duetSegment.id] === undefined
+        ? recordTake(current, duetSegment.id, owner.id)
+        : current,
+    )
+  }, [takeMode, duet, duetSegment, recorder.attempts])
+
+  const scoreBySegment = useMemo(() => bestScoreBySegment(recorder.attempts), [recorder.attempts])
+  const takesBySegment = useMemo(() => takeStatesBySegment(recorder.attempts), [recorder.attempts])
+
   const liveWaveformActive =
     state.matches('preparing') || state.matches('countdown') || state.matches('recording')
   const workflowLocked =
@@ -408,6 +572,15 @@ function LocalDubStage({
           recorder.send({ type: 'VIDEO_ENDED' })
         }}
       />
+
+      {subtitles.length > 0 ? (
+        <SubtitleRenderer
+          subtitles={subtitles}
+          speakerSegments={orderedSegments}
+          characters={characters}
+          mediaTimeRef={mediaTimeRef}
+        />
+      ) : null}
 
       {reference ? (
         <section className="flex flex-col gap-3" aria-labelledby="referencia-enviada-titulo">
@@ -507,7 +680,144 @@ function LocalDubStage({
           <LevelMeter peak={recorder.level} recording={state.matches('recording')} />
         )}
 
-        {state.matches('idle') && recorder.supported ? (
+        {reference && orderedSegments.length > 1 && (state.matches('idle') || state.matches('preview')) ? (
+          <fieldset className="flex flex-col gap-3">
+            <legend className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+              Como gravar
+            </legend>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  { value: 'full', label: 'Cena inteira' },
+                  { value: 'segment', label: 'Fala a fala' },
+                  ...(duetAvailable ? [{ value: 'duet', label: 'Em dupla' } as const] : []),
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={takeMode === option.value}
+                  data-testid={`local-take-mode-${option.value}`}
+                  onClick={() => {
+                    setTakeMode(option.value)
+                  }}
+                  className={`min-h-11 border-2 px-4 font-display text-sm uppercase tracking-widest ${
+                    takeMode === option.value
+                      ? 'border-accent bg-accent text-paper'
+                      : 'border-ink-line hover:border-paper'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-sm text-muted">
+              {takeMode === 'segment'
+                ? 'Cada trecho detectado é gravado e avaliado separadamente.'
+                : takeMode === 'duet'
+                  ? 'Dois jogadores no mesmo aparelho, revezando as vozes detectadas.'
+                  : 'Uma tomada do começo ao fim.'}
+            </p>
+            {!duetAvailable ? (
+              <p className="text-xs text-muted">
+                O modo em dupla precisa de duas vozes detectadas no vídeo — neste arquivo
+                identificamos só uma.
+              </p>
+            ) : null}
+          </fieldset>
+        ) : null}
+
+        {reference && (state.matches('idle') || state.matches('preview')) ? (
+          <details className="border-2 border-ink-line">
+            <summary className="cursor-pointer px-4 py-3 font-display text-sm uppercase tracking-widest">
+              Falas da cena ({subtitles.length} de {orderedSegments.length} preenchidas)
+            </summary>
+            <div className="flex flex-col gap-2 border-t-2 border-ink-line p-4">
+              <p className="text-xs text-muted">
+                Digite o que é dito em cada trecho para a legenda acompanhar a cena durante a
+                dublagem. Nada é transcrito automaticamente — sua cena não sai do aparelho.
+              </p>
+              {orderedSegments.map((segment, index) => (
+                <label key={segment.id} className="flex flex-col gap-1">
+                  <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+                    {index + 1}. {formatTimecode(segment.startMs)} –{' '}
+                    {formatTimecode(segment.endMs)}
+                  </span>
+                  <input
+                    type="text"
+                    maxLength={300}
+                    value={texts[segment.id] ?? ''}
+                    placeholder="O que é dito neste trecho?"
+                    data-testid={`local-fala-${String(index)}`}
+                    onChange={(event) => {
+                      updateText(segment.id, event.target.value)
+                    }}
+                    className="min-h-11 border-2 border-ink-line bg-ink-soft px-3 font-body text-sm text-paper placeholder:text-muted"
+                  />
+                </label>
+              ))}
+            </div>
+          </details>
+        ) : null}
+
+        {takeMode === 'segment' && activeSegment && (state.matches('idle') || state.matches('preview')) ? (
+          <SegmentNavigator
+            segments={orderedSegments}
+            characters={characters}
+            activeIndex={activeSegmentIndex}
+            takes={takesBySegment}
+            onSelect={(index) => {
+              setActiveSegmentIndex(index)
+              recorder.send({ type: 'RESET' })
+            }}
+          />
+        ) : null}
+
+        {takeMode === 'duet' && !duet ? (
+          <DuetSetup
+            sceneId={selected.id}
+            characters={characters}
+            onStart={(session) => {
+              setDuet(session)
+            }}
+          />
+        ) : null}
+
+        {takeMode === 'duet' && duet && !duetFinished ? (
+          <DuetTurn
+            session={duet}
+            segments={orderedSegments}
+            characters={characters}
+            currentSegment={duetSegment ?? null}
+            onReset={() => {
+              setDuet(null)
+              recorder.send({ type: 'RESET' })
+            }}
+          />
+        ) : null}
+
+        {takeMode === 'duet' && duet && duetFinished ? (
+          <DuetSummary
+            session={duet}
+            segments={orderedSegments}
+            scoreBySegment={scoreBySegment}
+            onRestart={() => {
+              setDuet(null)
+              recorder.send({ type: 'RESET' })
+            }}
+          />
+        ) : null}
+
+        {takeMode !== 'full' && (state.matches('idle') || state.matches('preview')) ? (
+          <StitchedPlayback
+            attempts={recorder.attempts}
+            segments={orderedSegments}
+            durationMs={selected.durationMs}
+            video={videoElement}
+          />
+        ) : null}
+
+        {state.matches('idle') && recorder.supported && !duetFinished && !(takeMode === 'duet' && !duet) ? (
           <div className="flex flex-col gap-3">
             <Button
               size="hero"
@@ -516,7 +826,9 @@ function LocalDubStage({
                 void recorder.requestDub()
               }}
             >
-              ● Começar a dublar{reference ? ' e pontuar' : ''}
+              {activeSegment
+                ? `● Dublar o trecho ${String(orderedSegments.findIndex((entry) => entry.id === activeSegment.id) + 1)}`
+                : `● Começar a dublar${reference ? ' e pontuar' : ''}`}
             </Button>
             <p className="text-xs text-muted">
               Vamos pedir acesso ao microfone. Sua voz não é enviada para nenhum servidor.
@@ -552,7 +864,7 @@ function LocalDubStage({
           </p>
         ) : null}
 
-        {state.matches('preview') && recorder.currentAttempt ? (
+        {state.matches('preview') && recorder.currentAttempt && !duetFinished ? (
           <div className="flex flex-col gap-6">
             <div
               inert={exportingVideo}
@@ -574,9 +886,26 @@ function LocalDubStage({
               sourceFileName={selected.fileName}
               onExportingChange={setExportingVideo}
             />
-            <Button size="lg" disabled={exportingVideo} onClick={recorder.retry}>
-              Gravar novamente
-            </Button>
+            {takeMode === 'duet' ? (
+              // No dueto o turno já avançou; regravar aqui pegaria a fala do
+              // OUTRO jogador. A troca de mãos é explícita.
+              <Button
+                size="lg"
+                disabled={exportingVideo}
+                data-testid="local-duet-pass"
+                onClick={() => {
+                  recorder.send({ type: 'RESET' })
+                }}
+              >
+                {duetSegment && duet
+                  ? `Passar a vez — ${segmentOwner(duetSegment, duet.players)?.name ?? 'próximo'}`
+                  : 'Continuar'}
+              </Button>
+            ) : (
+              <Button size="lg" disabled={exportingVideo} onClick={recorder.retry}>
+                Gravar novamente
+              </Button>
+            )}
           </div>
         ) : null}
 

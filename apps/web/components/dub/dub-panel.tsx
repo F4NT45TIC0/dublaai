@@ -8,7 +8,16 @@ import { useRecorder } from '@/lib/use-recorder'
 import { Countdown } from './countdown'
 import { LevelMeter } from './level-meter'
 import { AttemptPlayback } from './attempt-playback'
-import { SegmentNavigator, type SegmentTakeState } from './segment-navigator'
+import { SegmentNavigator } from './segment-navigator'
+import { StitchedPlayback } from './stitched-playback'
+import {
+  analysisWindowFor,
+  bestScoreBySegment,
+  orderSegments,
+  takeStatesBySegment,
+  visibleAttemptsFor,
+  type TakeMode,
+} from '@/lib/take-modes'
 import { DuetSetup, DuetSummary, DuetTurn } from './duet-panel'
 import {
   isComplete,
@@ -19,19 +28,6 @@ import {
   segmentOwner,
   type DuetSession,
 } from '@/lib/duet-session'
-
-/** Como a cena é gravada. */
-type TakeMode = 'full' | 'segment' | 'duet'
-
-/**
- * Folga antes e depois da fala.
- *
- * Quem dubla precisa de embalo: entrar exatamente no primeiro fonema é
- * impossível sem ouvir o que vem antes. A folga entra na janela de análise
- * também, então o motor compara o mesmo trecho que a pessoa gravou.
- */
-const LEAD_IN_MS = 700
-const TAIL_MS = 400
 
 export interface DubPanelProps {
   readonly scene: SceneDetail
@@ -69,10 +65,7 @@ export function DubPanel({
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0)
   const [duet, setDuet] = useState<DuetSession | null>(null)
 
-  const orderedSegments = useMemo(
-    () => [...scene.speakerSegments].sort((a, b) => a.startMs - b.startMs),
-    [scene.speakerSegments],
-  )
+  const orderedSegments = useMemo(() => orderSegments(scene.speakerSegments), [scene.speakerSegments])
   /** Dueto exige personagens suficientes para dois donos distintos. */
   const duetAvailable = scene.characters.length >= MIN_DUET_CHARACTERS
 
@@ -97,13 +90,10 @@ export function DubPanel({
   const bySegment = activeSegment !== undefined
 
   /** Trecho gravado e analisado. Ausente no modo cena inteira. */
-  const analysisWindow = useMemo(() => {
-    if (!activeSegment) return undefined
-    return {
-      startMs: Math.max(0, activeSegment.startMs - LEAD_IN_MS),
-      endMs: Math.min(scene.durationMs, activeSegment.endMs + TAIL_MS),
-    }
-  }, [activeSegment, scene.durationMs])
+  const analysisWindow = useMemo(
+    () => (activeSegment ? analysisWindowFor(activeSegment, scene.durationMs) : undefined),
+    [activeSegment, scene.durationMs],
+  )
 
   const recorder = useRecorder({
     sceneId: scene.id,
@@ -169,42 +159,14 @@ export function DubPanel({
   }, [takeMode, duet, duetSegment, recorder.attempts])
 
   /** Nota de cada fala, para o placar do dueto. */
-  const scoreBySegment = useMemo(() => {
-    const map: Record<string, number | null> = {}
-    for (const attempt of recorder.attempts) {
-      const segmentId = attempt.segmentId
-      if (segmentId === undefined) continue
-      const score = attempt.result?.overall.value ?? null
-      const existing = map[segmentId]
-      if (existing === undefined || (score !== null && (existing === null || score > existing))) {
-        map[segmentId] = score
-      }
-    }
-    return map
-  }, [recorder.attempts])
+  const scoreBySegment = useMemo(() => bestScoreBySegment(recorder.attempts), [recorder.attempts])
 
   /** Melhor tomada por fala, para o navegador mostrar o progresso. */
-  const takesBySegment = useMemo(() => {
-    const map: Record<string, SegmentTakeState> = {}
-    for (const attempt of recorder.attempts) {
-      const segmentId = attempt.segmentId
-      if (segmentId === undefined) continue
-      const score = attempt.result?.overall.value ?? null
-      const existing = map[segmentId]
-      const improves =
-        existing === undefined ||
-        (score !== null && (existing.score === null || score > existing.score))
-      if (improves) map[segmentId] = { recorded: true, score }
-    }
-    return map
-  }, [recorder.attempts])
+  const takesBySegment = useMemo(() => takeStatesBySegment(recorder.attempts), [recorder.attempts])
 
   /** No modo fala-a-fala, o histórico mostrado é o da fala corrente. */
   const visibleAttempts = useMemo(
-    () =>
-      activeSegment
-        ? recorder.attempts.filter((attempt) => attempt.segmentId === activeSegment.id)
-        : recorder.attempts.filter((attempt) => attempt.segmentId === undefined),
+    () => visibleAttemptsFor(recorder.attempts, activeSegment?.id),
     [recorder.attempts, activeSegment],
   )
 
@@ -345,6 +307,15 @@ export function DubPanel({
             setDuet(null)
             recorder.send({ type: 'RESET' })
           }}
+        />
+      ) : null}
+
+      {takeMode !== 'full' && (state.matches('idle') || state.matches('preview')) ? (
+        <StitchedPlayback
+          attempts={recorder.attempts}
+          segments={orderedSegments}
+          durationMs={scene.durationMs}
+          video={video}
         />
       ) : null}
 
