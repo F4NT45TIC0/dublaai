@@ -175,8 +175,8 @@ export function computeScore(input: ScoreInput): ScoreResult {
     engineVersion: ENGINE_VERSION,
     configVersion: config.version,
     mode,
-    overall: combine(metrics, mode, config),
-    metrics,
+    overall: rounded(combine(metrics, mode, config)),
+    metrics: roundedMetrics(metrics),
     globalOffsetMs: offsetReliable ? offset.lagFrames * HOP_MS : 0,
     globalOffsetConfidence: offset.confidence,
     // Os tempos voltam a ser absolutos na cena: a UI mostra "fala 3 de 7",
@@ -190,6 +190,35 @@ export function computeScore(input: ScoreInput): ScoreResult {
       : segmentAnalysis.feedback,
     signal,
   }
+}
+
+/**
+ * Arredonda a nota para inteiro.
+ *
+ * "68,3888724947629" afirma uma precisão de treze casas que a medição não tem:
+ * o alinhamento é quadro a quadro, a 20 ms, e uma casa decimal já seria mais do
+ * que o método sustenta. Mostrar o número cru é exatamente o tipo de precisão
+ * inventada que o §12 proíbe — e, na tela, vira lixo em cima da nota.
+ *
+ * A confiança continua fracionária de propósito: ela é um peso interno, não um
+ * número que a pessoa lê.
+ */
+function rounded(metric: Metric): Metric {
+  if (metric.value === null) return metric
+  return { ...metric, value: Math.round(metric.value) }
+}
+
+/**
+ * Arredonda todas as métricas presentes.
+ *
+ * Percorre as chaves existentes em vez de listá-las: o conjunto muda entre os
+ * modos (paródia troca articulação e entonação por ocupação), e uma lista fixa
+ * já deixou uma métrica cair fora silenciosamente.
+ */
+function roundedMetrics<T extends Readonly<Record<string, Metric>>>(metrics: T): T {
+  const saida: Record<string, Metric> = {}
+  for (const [key, metric] of Object.entries(metrics)) saida[key] = rounded(metric)
+  return saida as T
 }
 
 /** Rebaixa uma métrica já calculada, preservando valor e confiança reduzida. */

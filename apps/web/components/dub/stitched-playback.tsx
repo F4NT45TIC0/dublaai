@@ -197,47 +197,75 @@ export function StitchedPlayback({
     }
   }, [best, segments, durationMs, sources, loadOriginalAudio, remoteTakes])
 
-  if (takeCount === 0) return null
+  const faltam = segments.length - takeCount
+  const pronta = segments.length > 0 && faltam <= 0
 
   return (
     <section
-      className="flex flex-col gap-3 border-2 border-ink-line p-4"
+      className={`flex flex-col gap-4 border-2 p-4 ${pronta ? 'border-accent' : 'border-ink-line'}`}
       data-testid="stitched-playback"
-      aria-label="Cena completa com suas tomadas"
+      aria-label="Sua cena"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-display text-lg uppercase">Cena completa</h3>
-        <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
-          {takeCount === 1 ? '1 fala montada' : `${String(takeCount)} falas montadas`}
-        </span>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h3 className="font-display text-xl uppercase">Sua cena</h3>
+        <p
+          className="font-body text-xs font-bold uppercase tracking-[0.16em] text-muted"
+          role="status"
+        >
+          {takeCount} de {segments.length} falas prontas
+        </p>
       </div>
 
-      {stitched ? (
-        <>
-          <AttemptPlayback attempt={stitched} video={video} />
-          {sourceFileName ? (
-            <DubbedVideoExport
-              attempt={stitched}
-              video={video}
-              sourceFileName={sourceFileName}
-            />
-          ) : null}
-        </>
+      {/*
+        A pergunta que a tela precisa responder é "posso ouvir agora?". Antes
+        ela ficava sem resposta: o botão aparecia do nada quando havia tomada e
+        sumia quando não havia, sem nunca dizer o que faltava. Agora cada estado
+        diz em uma frase onde a pessoa está e qual é o próximo passo.
+      */}
+      {takeCount === 0 ? (
+        <p className="text-sm text-muted">
+          Nenhuma fala gravada ainda. Grave a primeira e ela aparece aqui para você ouvir com o
+          vídeo.
+        </p>
       ) : (
-        <Button
-          size="lg"
-          variant="secondary"
-          disabled={building}
-          data-testid="stitched-build"
-          onClick={() => {
-            void build()
-          }}
-        >
-          {building ? 'Montando…' : '▶ Ouvir a cena inteira'}
-        </Button>
+        <p className="text-sm text-muted">
+          {pronta
+            ? 'Todas as falas estão prontas. Ouça a cena inteira com a sua voz e baixe o vídeo.'
+            : `Dá para ouvir o que já tem — as ${String(faltam)} falas que faltam entram como silêncio até você gravá-las.`}
+        </p>
       )}
 
-      {error ? <p className="text-xs text-warn">{error}</p> : null}
+      {takeCount > 0 ? (
+        stitched ? (
+          <div className="flex flex-col gap-4">
+            <AttemptPlayback attempt={stitched} video={video} />
+            {sourceFileName ? (
+              <DubbedVideoExport
+                attempt={stitched}
+                video={video}
+                sourceFileName={sourceFileName}
+              />
+            ) : null}
+          </div>
+        ) : (
+          <Button
+            size="hero"
+            disabled={building}
+            data-testid="stitched-build"
+            onClick={() => {
+              void build()
+            }}
+          >
+            {building
+              ? 'Montando…'
+              : pronta
+                ? '▶ Assistir minha cena dublada'
+                : '▶ Ouvir o que já gravei'}
+          </Button>
+        )
+      ) : null}
+
+      {error ? <p className="border-2 border-warn px-3 py-2 text-sm text-warn">{error}</p> : null}
     </section>
   )
 }

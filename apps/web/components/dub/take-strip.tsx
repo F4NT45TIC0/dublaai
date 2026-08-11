@@ -108,7 +108,7 @@ export function TakeStrip({
                 onClick={() => {
                   onSelect(index)
                 }}
-                className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-0.5 border-2 disabled:opacity-40 ${
+                className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-0.5 overflow-hidden border-2 disabled:opacity-40 ${
                   ativa
                     ? 'border-accent bg-accent text-paper'
                     : gravada || original

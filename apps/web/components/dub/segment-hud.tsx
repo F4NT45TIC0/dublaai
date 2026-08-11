@@ -134,14 +134,21 @@ export function SegmentHud({
             data-testid="segment-hud-original"
             disabled={disabled}
             onClick={onToggleOriginal}
-            className={`min-h-12 min-w-12 border-2 px-3 font-display text-xs uppercase tracking-widest disabled:opacity-40 ${
+            className={`min-h-12 border-2 px-3 font-display text-xs uppercase tracking-widest disabled:opacity-40 ${
               isOriginal
                 ? 'border-accent bg-accent text-paper'
                 : 'border-ink-line text-muted hover:border-paper hover:text-paper'
             }`}
           >
-            <span aria-hidden="true">◆</span>
-            <span className="sr-only">Usar a voz original nesta fala</span>
+            {/*
+              O losango sozinho não dizia nada: um ícone sem rótulo obriga a
+              clicar para descobrir. O texto fica visível, não escondido para
+              leitor de tela.
+            */}
+            <span aria-hidden="true" className="mr-1">
+              ◆
+            </span>
+            {isOriginal ? 'No original' : 'Voz original'}
           </button>
 
           {phase === 'preview' ? (

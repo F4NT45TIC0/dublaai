@@ -163,14 +163,14 @@ test.describe('arquivo ou URL de vídeo', () => {
 
     // Modo fala-a-fala: grava só o primeiro trecho e encerra sozinho.
     await page.getByTestId('local-take-mode-segment').click()
-    await expect(page.getByTestId('local-start-dub')).toContainText('Dublar o trecho 1')
+    await expect(page.getByTestId('segment-hud')).toContainText('Fala 1/')
 
-    await page.getByTestId('local-start-dub').click()
+    await page.getByTestId('segment-hud-gravar').click()
     await waitForLocalState(page, 'recording', 40_000)
     await waitForLocalState(page, 'preview', 40_000)
 
     // E a cena completa costurada fica disponível.
-    await expect(page.getByTestId('stitched-playback')).toContainText('1 fala montada')
+    await expect(page.getByTestId('stitched-playback')).toContainText('1 de 8 falas prontas')
   })
 
   test('o botão de próxima fala avança sem obrigar a rolar a página', async ({ page }) => {
@@ -181,15 +181,15 @@ test.describe('arquivo ou URL de vídeo', () => {
     ).toBeVisible({ timeout: 60_000 })
 
     await page.getByTestId('local-take-mode-segment').click()
-    await expect(page.getByTestId('local-start-dub')).toContainText('trecho 1')
+    await expect(page.getByTestId('segment-hud')).toContainText('Fala 1/')
 
-    await page.getByTestId('local-start-dub').click()
+    await page.getByTestId('segment-hud-gravar').click()
     await waitForLocalState(page, 'preview', 40_000)
 
     // O ciclo gravar → seguir acontece no mesmo lugar da tela.
     await page.getByTestId('local-next-segment').click()
     await waitForLocalState(page, 'idle')
-    await expect(page.getByTestId('local-start-dub')).toContainText('trecho 2')
+    await expect(page.getByTestId('segment-hud')).toContainText('Fala 2/')
   })
 
   test('a barra fixa mostra a fala, avança e grava pelo teclado', async ({ page }) => {
@@ -243,16 +243,16 @@ test.describe('arquivo ou URL de vídeo', () => {
     await page.getByTestId('local-fonte-2').click()
     await expect(page.getByTestId('local-fonte-1')).toHaveAttribute('aria-pressed', 'true')
 
-    await page.getByTestId('local-start-dub').click()
+    await page.getByTestId('segment-hud-gravar').click()
     await waitForLocalState(page, 'preview', 40_000)
 
     // A próxima pendência pula 2 e 3: quem está no original já está resolvido.
     await page.getByTestId('local-next-segment').click()
     await waitForLocalState(page, 'idle')
-    await expect(page.getByTestId('local-start-dub')).toContainText('trecho 4')
+    await expect(page.getByTestId('segment-hud')).toContainText('Fala 4/')
 
     // A cena completa conta a tomada gravada e os dois trechos originais.
-    await expect(page.getByTestId('stitched-playback')).toContainText('3 falas montadas')
+    await expect(page.getByTestId('stitched-playback')).toContainText('3 de 8 falas prontas')
   })
 
   test('nenhum microfone continua ativo depois de sair da página (§111.14)', async ({ page }) => {

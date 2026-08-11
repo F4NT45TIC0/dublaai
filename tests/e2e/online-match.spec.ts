@@ -83,7 +83,7 @@ test.describe('partida online', () => {
       await expect(daVez.getByTestId('online-vez-do-outro')).toBeVisible({ timeout: 30_000 })
 
       // A fala gravada num aparelho chega ao outro para ser ouvida.
-      await expect(parado.getByTestId('stitched-playback')).toContainText('1 fala montada')
+      await expect(parado.getByTestId('stitched-playback')).toContainText('1 de 8 falas prontas')
     } finally {
       await anfitriao.close()
       await convidado.close()

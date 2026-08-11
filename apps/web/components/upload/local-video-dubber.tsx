@@ -14,6 +14,7 @@ import { Countdown } from '@/components/dub/countdown'
 import { DuetSetup, DuetSummary, DuetTurn } from '@/components/dub/duet-panel'
 import { LevelMeter } from '@/components/dub/level-meter'
 import { SegmentHud, type SegmentPhase } from '@/components/dub/segment-hud'
+import { ModePicker } from '@/components/dub/mode-picker'
 import { TakeStrip, type TakeStripCell } from '@/components/dub/take-strip'
 import { StitchedPlayback } from '@/components/dub/stitched-playback'
 import { SubtitleRenderer } from '@/components/scene/subtitle-renderer'
@@ -1053,6 +1054,19 @@ function LocalDubStage({
         />
       ) : null}
 
+      {takeMode !== 'full' && (state.matches('idle') || state.matches('preview')) ? (
+        <StitchedPlayback
+          attempts={recorder.attempts}
+          segments={orderedSegments}
+          durationMs={selected.durationMs}
+          video={videoElement}
+          sources={sources}
+          loadOriginalAudio={loadOriginalAudio}
+          sourceFileName={selected.fileName}
+          remoteTakes={onlineTakes}
+        />
+      ) : null}
+
       {subtitles.length > 0 ? (
         <SubtitleRenderer
           subtitles={subtitles}
@@ -1120,14 +1134,6 @@ function LocalDubStage({
         data-testid="local-dub-panel"
         data-state={typeof state.value === 'string' ? state.value : JSON.stringify(state.value)}
       >
-        <div>
-          <h2 className="font-display text-title uppercase">Grave a sua dublagem</h2>
-          <p className="mt-2 max-w-2xl text-sm text-muted">
-            O áudio original fica mudo durante a gravação. Fale junto com a cena; depois você poderá
-            ouvir, receber as pontuações disponíveis e baixar o vídeo com a sua voz.
-          </p>
-        </div>
-
         {recorder.storageError ? (
           <p className="border-2 border-warn px-3 py-2 text-xs text-warn">
             A gravação continua nesta aba, mas não conseguimos salvá-la no armazenamento local.
@@ -1161,55 +1167,11 @@ function LocalDubStage({
         )}
 
         {reference && orderedSegments.length > 1 && (state.matches('idle') || state.matches('preview')) ? (
-          <fieldset className="flex flex-col gap-3">
-            <legend className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
-              Como gravar
-            </legend>
-            <div className="flex flex-wrap gap-2">
-              {(
-                [
-                  { value: 'full', label: 'Cena inteira' },
-                  { value: 'segment', label: 'Fala a fala' },
-                  ...(duetAvailable
-                    ? ([
-                        { value: 'duet', label: 'Em dupla' },
-                        { value: 'online', label: 'Online' },
-                      ] as const)
-                    : []),
-                ] as const
-              ).map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={takeMode === option.value}
-                  data-testid={`local-take-mode-${option.value}`}
-                  onClick={() => {
-                    setTakeMode(option.value)
-                  }}
-                  className={`min-h-11 border-2 px-4 font-display text-sm uppercase tracking-widest ${
-                    takeMode === option.value
-                      ? 'border-accent bg-accent text-paper'
-                      : 'border-ink-line hover:border-paper'
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p className="text-sm text-muted">
-              {takeMode === 'segment'
-                ? 'Cada trecho detectado é gravado e avaliado separadamente.'
-                : takeMode === 'duet'
-                  ? 'Dois jogadores no mesmo aparelho, revezando as vozes detectadas.'
-                  : 'Uma tomada do começo ao fim.'}
-            </p>
-            {!duetAvailable ? (
-              <p className="text-xs text-muted">
-                O modo em dupla precisa de duas vozes detectadas no vídeo — neste arquivo
-                identificamos só uma.
-              </p>
-            ) : null}
-          </fieldset>
+          <ModePicker
+            value={takeMode}
+            duetAvailable={duetAvailable}
+            onChange={setTakeMode}
+          />
         ) : null}
 
         {reference && (state.matches('idle') || state.matches('preview')) ? (
@@ -1311,9 +1273,12 @@ function LocalDubStage({
               {orderedSegments.map((segment, index) => {
                 const usaOriginal = isOriginal(sources, segment.id)
                 return (
-                  <div key={segment.id} className="flex flex-col gap-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+                  <div
+                    key={segment.id}
+                    className="flex flex-col gap-2 border-2 border-ink-line p-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] tabular-nums text-muted">
                         {index + 1}. {formatTimecode(segment.startMs)} –{' '}
                         {formatTimecode(segment.endMs)}
                       </span>
@@ -1416,21 +1381,9 @@ function LocalDubStage({
           />
         ) : null}
 
-        {takeMode !== 'full' && (state.matches('idle') || state.matches('preview')) ? (
-          <StitchedPlayback
-            attempts={recorder.attempts}
-            segments={orderedSegments}
-            durationMs={selected.durationMs}
-            video={videoElement}
-            sources={sources}
-            loadOriginalAudio={loadOriginalAudio}
-            sourceFileName={selected.fileName}
-            remoteTakes={onlineTakes}
-          />
-        ) : null}
-
         {state.matches('idle') &&
         recorder.supported &&
+        takeMode !== 'segment' &&
         !duetFinished &&
         !(takeMode === 'duet' && !duet) &&
         // No online o botão some fora da sua vez: apertar antes da hora daria

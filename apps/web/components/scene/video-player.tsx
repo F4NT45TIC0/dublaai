@@ -61,6 +61,15 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const [playing, setPlaying] = useState(false)
   const [buffering, setBuffering] = useState(true)
   const [progress, setProgress] = useState(0)
+  /**
+   * Proporção real do arquivo.
+   *
+   * A caixa era 16:9 fixa, então um vídeo em pé — que é o formato de quase todo
+   * clipe salvo do celular — aparecia como uma tira no meio de duas tarjas
+   * pretas enormes. Medir o arquivo e usar a proporção dele faz a moldura
+   * abraçar o vídeo em vez de sobrar de lado.
+   */
+  const [aspect, setAspect] = useState<number | null>(null)
 
   const isBuffered = useCallback((fromMs: number, toMs: number) => {
     const video = videoRef.current
@@ -329,13 +338,28 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
         O `max-w` derivado de 62vh mantém a proporção e limita a altura sem
         precisar saber o formato do arquivo antes de carregá-lo.
       */}
-      <div className="relative mx-auto aspect-video w-full max-w-[calc(62vh*16/9)] border-2 border-ink-line bg-black">
+      {/*
+        Teto de altura, não de largura: sem ele um vídeo em pé ocuparia a tela
+        inteira e empurraria os comandos para fora. `max-w` derivado de 62vh
+        limita a altura mantendo a proporção do arquivo.
+      */}
+      <div
+        className="relative mx-auto w-full border-2 border-ink-line bg-black"
+        style={{
+          aspectRatio: aspect ?? 16 / 9,
+          maxWidth: `calc(62vh * ${String(aspect ?? 16 / 9)})`,
+        }}
+      >
         <video
           ref={videoRef}
           src={src}
           poster={posterSrc}
           preload="auto"
           playsInline
+          onLoadedMetadata={(event) => {
+            const { videoWidth, videoHeight } = event.currentTarget
+            if (videoWidth > 0 && videoHeight > 0) setAspect(videoWidth / videoHeight)
+          }}
           {...(referenceAudioSrc ? { muted: true } : {})}
           className="h-full w-full object-contain"
           aria-label={title}
