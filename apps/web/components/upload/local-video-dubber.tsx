@@ -18,7 +18,6 @@ import { ModePicker } from '@/components/dub/mode-picker'
 import { SceneReviewPanel } from '@/components/dub/scene-review-panel'
 import { TakeStrip, type TakeStripCell } from '@/components/dub/take-strip'
 import { StitchedPlayback } from '@/components/dub/stitched-playback'
-import { SubtitleRenderer } from '@/components/scene/subtitle-renderer'
 import { VideoPlayer, type VideoPlayerHandle } from '@/components/scene/video-player'
 import { Waveform } from '@/components/scene/waveform'
 import {
@@ -602,7 +601,7 @@ const MODE_LABELS: Record<TakeMode, string> = {
   online: 'Multiplayer',
 }
 
-const RECORDING_REFERENCE_VOLUME = 0.12
+const RECORDING_REFERENCE_VOLUME = 0.1
 
 function LocalDubStage({
   selected,
@@ -1400,16 +1399,32 @@ function LocalDubStage({
           showSceneReview ? 'grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]' : ''
         }
       >
-        <VideoPlayer
-          ref={attachVideo}
-          src={selected.url}
-          durationMs={selected.durationMs}
-          title={`Vídeo para dublagem: ${selected.fileName}`}
-          controlsHidden={mediaInteractionLocked}
-          onEnded={() => {
-            recorder.send({ type: 'VIDEO_ENDED' })
-          }}
-        />
+        <div className="min-w-0">
+          <VideoPlayer
+            ref={attachVideo}
+            src={selected.url}
+            durationMs={selected.durationMs}
+            title={`Vídeo para dublagem: ${selected.fileName}`}
+            controlsHidden={mediaInteractionLocked}
+            onEnded={() => {
+              recorder.send({ type: 'VIDEO_ENDED' })
+            }}
+          />
+
+          {reference ? (
+            <p
+              className="mt-3 border-l-4 border-warn bg-warn/10 px-3 py-2 text-xs leading-relaxed text-paper/80"
+              data-testid="reference-audio-notice"
+              role="note"
+            >
+              <strong className="font-display uppercase tracking-wider text-warn">
+                Som de referência · 10%
+              </strong>{' '}
+              — ele toca baixo apenas para orientar sua gravação e não entra no resultado. Para
+              preservar uma fala do vídeo, marque <strong>“Manter voz original”</strong> ao lado.
+            </p>
+          ) : null}
+        </div>
 
         {showSceneReview ? (
           <SceneReviewPanel
@@ -1450,15 +1465,6 @@ function LocalDubStage({
           loadOriginalAudio={loadOriginalAudio}
           sourceFileName={selected.fileName}
           remoteTakes={onlineTakes}
-        />
-      ) : null}
-
-      {subtitles.length > 0 ? (
-        <SubtitleRenderer
-          subtitles={subtitles}
-          speakerSegments={orderedSegments}
-          characters={characters}
-          mediaTimeRef={mediaTimeRef}
         />
       ) : null}
 

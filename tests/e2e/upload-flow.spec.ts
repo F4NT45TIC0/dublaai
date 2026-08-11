@@ -67,7 +67,7 @@ test.describe('arquivo ou URL de vídeo', () => {
           .locator('video[aria-label^="Vídeo para dublagem:"]')
           .evaluate((video: HTMLVideoElement) => ({ muted: video.muted, volume: video.volume })),
       )
-      .toEqual({ muted: false, volume: 0.12 })
+      .toEqual({ muted: false, volume: 0.1 })
     const liveWaveform = page.getByRole('img', {
       name: 'Forma de onda da referência com sua voz ao vivo',
     })
@@ -159,7 +159,9 @@ test.describe('arquivo ou URL de vídeo', () => {
     })
   })
 
-  test('falas digitadas viram legenda e o modo fala-a-fala grava um trecho', async ({ page }) => {
+  test('a fala revisada aparece no cabeçalho e o modo fala-a-fala grava um trecho', async ({
+    page,
+  }) => {
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
     await expect(page.getByRole('heading', { name: 'video-with-reference-audio.mp4' })).toBeVisible(
@@ -262,9 +264,19 @@ test.describe('arquivo ou URL de vídeo', () => {
     await page.getByTestId('local-take-mode-segment').click()
     await confirmCharacterSetup(page)
 
+    await expect(page.getByTestId('reference-audio-notice')).toContainText(
+      'Som de referência · 10%',
+    )
+    await expect(page.getByTestId('scene-review-page')).toContainText('Página 1 de 4')
+    await expect(page.getByTestId('local-fonte-2')).toHaveCount(0)
+
     // Deixa os trechos 2 e 3 com a voz do vídeo; só o 1 será dublado.
     await page.getByTestId('local-fonte-1').click()
+    await page.getByTestId('scene-review-next').click()
+    await expect(page.getByTestId('scene-review-page')).toContainText('Página 2 de 4')
+    await expect(page.getByTestId('segment-hud')).toContainText('Fala 3/')
     await page.getByTestId('local-fonte-2').click()
+    await page.getByTestId('scene-review-previous').click()
     await expect(page.getByTestId('local-fonte-1')).toHaveAttribute('aria-pressed', 'true')
 
     await page.getByTestId('segment-hud-gravar').click()

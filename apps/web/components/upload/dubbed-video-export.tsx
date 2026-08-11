@@ -87,8 +87,8 @@ export function DubbedVideoExport({
       <div>
         <h3 className="font-display text-xl uppercase">Seu vídeo dublado</h3>
         <p className="mt-1 text-sm text-muted">
-          A cena é renderizada no seu navegador com a sua voz e sem o áudio original. Nada é
-          enviado para a internet.
+          A cena é renderizada no seu navegador com o áudio montado nesta tela. Nada é enviado para
+          a internet.
         </p>
       </div>
 
