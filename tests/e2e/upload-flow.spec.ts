@@ -39,6 +39,20 @@ function probeMedia(path: string): ProbeResult {
   return JSON.parse(output) as ProbeResult
 }
 
+/** A forma de onda é diagnóstico e mora numa gaveta própria. */
+async function abrirOnda(page: Page): Promise<void> {
+  const gaveta = page.locator('details', { has: page.locator('summary', { hasText: /Forma de onda/i }) })
+  if (await gaveta.evaluate((el: HTMLDetailsElement) => el.open)) return
+  await gaveta.locator('summary').click()
+}
+
+/** O modo e as falas moram na gaveta de ajustes; abrir é parte do caminho. */
+async function abrirAjustes(page: Page): Promise<void> {
+  const gaveta = page.getByTestId('ajustes-da-cena')
+  if (await gaveta.evaluate((el: HTMLDetailsElement) => el.open)) return
+  await gaveta.locator('summary').click()
+}
+
 test.describe('arquivo ou URL de vídeo', () => {
   test('extrai a referência, mostra a voz ao vivo, pontua e baixa o vídeo', async ({ page }) => {
     test.setTimeout(120_000)
@@ -49,6 +63,7 @@ test.describe('arquivo ou URL de vídeo', () => {
     await expect(
       page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
     ).toBeVisible()
+    await abrirOnda(page)
     await expect(
       page.getByRole('slider', { name: 'Forma de onda da referência do vídeo enviado' }),
     ).toBeVisible({ timeout: 30_000 })
@@ -133,6 +148,7 @@ test.describe('arquivo ou URL de vídeo', () => {
     await expect(page.getByRole('heading', { name: 'cena-url.mp4' })).toBeVisible({
       timeout: 30_000,
     })
+    await abrirOnda(page)
     await expect(
       page.getByRole('slider', { name: 'Forma de onda da referência do vídeo enviado' }),
     ).toBeVisible()
@@ -156,12 +172,12 @@ test.describe('arquivo ou URL de vídeo', () => {
     ).toBeVisible({ timeout: 60_000 })
 
     // A pessoa digita a fala do primeiro trecho — nada é transcrito sozinho.
-    const editor = page.locator('summary', { hasText: 'Falas da cena' })
-    await editor.click()
+    await abrirAjustes(page)
     await page.getByTestId('local-fala-0').fill('Olá, mundo da dublagem!')
-    await expect(editor).toContainText('1 de')
+    await expect(page.getByTestId('ajustes-da-cena')).toContainText('1/8 falas escritas')
 
     // Modo fala-a-fala: grava só o primeiro trecho e encerra sozinho.
+    await abrirAjustes(page)
     await page.getByTestId('local-take-mode-segment').click()
     await expect(page.getByTestId('segment-hud')).toContainText('Fala 1/')
 
@@ -180,6 +196,7 @@ test.describe('arquivo ou URL de vídeo', () => {
       page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
     ).toBeVisible({ timeout: 60_000 })
 
+    await abrirAjustes(page)
     await page.getByTestId('local-take-mode-segment').click()
     await expect(page.getByTestId('segment-hud')).toContainText('Fala 1/')
 
@@ -199,11 +216,12 @@ test.describe('arquivo ou URL de vídeo', () => {
       page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
     ).toBeVisible({ timeout: 60_000 })
 
+    await abrirAjustes(page)
     await page.getByTestId('local-take-mode-segment').click()
     await expect(page.getByTestId('segment-hud')).toBeVisible()
 
     // O texto da fala aparece na barra: é o que a pessoa lê antes de gravar.
-    await page.locator('summary', { hasText: /Falas da cena/i }).click()
+    await abrirAjustes(page)
     await page.getByTestId('local-fala-0').fill('Ao infinito e além')
     await expect(page.getByTestId('segment-hud-fala')).toHaveText('Ao infinito e além')
 
@@ -235,10 +253,11 @@ test.describe('arquivo ou URL de vídeo', () => {
       page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
     ).toBeVisible({ timeout: 60_000 })
 
+    await abrirAjustes(page)
     await page.getByTestId('local-take-mode-segment').click()
 
     // Deixa os trechos 2 e 3 com a voz do vídeo; só o 1 será dublado.
-    await page.locator('summary', { hasText: /Falas da cena/i }).click()
+    await abrirAjustes(page)
     await page.getByTestId('local-fonte-1').click()
     await page.getByTestId('local-fonte-2').click()
     await expect(page.getByTestId('local-fonte-1')).toHaveAttribute('aria-pressed', 'true')

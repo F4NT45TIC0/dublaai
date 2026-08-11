@@ -404,6 +404,14 @@ export function LocalVideoDubber() {
   )
 }
 
+/** Nome curto do modo, para o resumo da gaveta de ajustes. */
+const MODE_LABELS: Record<TakeMode, string> = {
+  full: 'Cena inteira',
+  segment: 'Fala a fala',
+  duet: 'Em dupla',
+  online: 'Online',
+}
+
 function LocalDubStage({
   selected,
   onInteractionLockChange,
@@ -1095,7 +1103,14 @@ function LocalDubStage({
       ) : null}
 
       {reference ? (
-        <section className="flex flex-col gap-3" aria-labelledby="referencia-enviada-titulo">
+        <details className="border-2 border-ink-line">
+          <summary className="min-h-12 cursor-pointer px-4 py-3 font-display text-sm uppercase tracking-widest">
+            Forma de onda da cena
+          </summary>
+          <section
+            className="flex flex-col gap-3 border-t-2 border-ink-line p-4"
+            aria-labelledby="referencia-enviada-titulo"
+          >
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 id="referencia-enviada-titulo" className="font-display text-2xl uppercase">
@@ -1140,7 +1155,8 @@ function LocalDubStage({
             pessoas podem reduzir a precisão. Articulação fica indisponível porque esta cena não
             possui o corpus necessário para uma calibração honesta.
           </p>
-        </section>
+          </section>
+        </details>
       ) : (
         <p className="border-2 border-warn px-4 py-3 text-sm text-warn" role="status">
           {unavailableReason}
@@ -1184,20 +1200,21 @@ function LocalDubStage({
           <LevelMeter peak={recorder.level} recording={state.matches('recording')} />
         )}
 
-        {reference && orderedSegments.length > 1 && (state.matches('idle') || state.matches('preview')) ? (
-          <ModePicker
-            value={takeMode}
-            duetAvailable={duetAvailable}
-            onChange={setTakeMode}
-          />
-        ) : null}
-
         {reference && (state.matches('idle') || state.matches('preview')) ? (
-          <details className="border-2 border-ink-line">
-            <summary className="cursor-pointer px-4 py-3 font-display text-sm uppercase tracking-widest">
-              Falas da cena ({subtitles.length} de {orderedSegments.length} preenchidas)
+          <details className="border-2 border-ink-line" data-testid="ajustes-da-cena">
+            <summary className="min-h-12 cursor-pointer px-4 py-3 font-display text-sm uppercase tracking-widest">
+              Ajustes da cena · {MODE_LABELS[takeMode]} · {subtitles.length}/
+              {orderedSegments.length} falas escritas
             </summary>
-            <div className="flex flex-col gap-2 border-t-2 border-ink-line p-4">
+            <div className="flex flex-col gap-4 border-t-2 border-ink-line p-4">
+              {orderedSegments.length > 1 ? (
+                <ModePicker
+                  value={takeMode}
+                  duetAvailable={duetAvailable}
+                  onChange={setTakeMode}
+                />
+              ) : null}
+
               <p className="text-xs text-muted">
                 As falas podem ser reconhecidas automaticamente aqui mesmo, no seu navegador — o
                 vídeo não sai do aparelho. Na primeira vez, o reconhecimento de fala baixa cerca de

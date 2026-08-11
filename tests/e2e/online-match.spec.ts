@@ -18,7 +18,15 @@ async function abrirVideo(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'video-with-reference-audio.mp4' })).toBeVisible({
     timeout: 60_000,
   })
+  await abrirAjustes(page)
   await page.getByTestId('local-take-mode-online').click()
+}
+
+/** O modo e as falas moram na gaveta de ajustes; abrir é parte do caminho. */
+async function abrirAjustes(page: Page): Promise<void> {
+  const gaveta = page.getByTestId('ajustes-da-cena')
+  if (await gaveta.evaluate((el: HTMLDetailsElement) => el.open)) return
+  await gaveta.locator('summary').click()
 }
 
 test.describe('partida online', () => {

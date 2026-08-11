@@ -15,22 +15,38 @@ import type { TranscribedChunk } from '@/workers/transcribe.worker'
  */
 
 /**
- * Frases separadas por menos que isto pertencem à mesma fala.
+ * Frases separadas por menos que isto podem pertencer à mesma fala.
  *
- * 400 ms é a pausa típica entre orações de um mesmo turno; acima disso já é
- * troca de fôlego ou de personagem. Juntar demais criaria blocos longos que
- * ninguém consegue dublar de uma vez.
+ * Eram 400 ms, e era demais: num diálogo rápido um personagem responde ao outro
+ * em menos que isso, e o resultado era uma "fala" só com o texto de dois ou três
+ * personagens. 250 ms cobre a pausa entre orações do mesmo turno sem atravessar
+ * a troca de quem fala.
  */
-const MERGE_GAP_MS = 400
+const MERGE_GAP_MS = 250
 
 /** Abaixo disso não dá tempo de falar nada — é ruído que o modelo legendou. */
 const MIN_SEGMENT_MS = 250
 
 /**
- * Teto por fala. Acima disso a pessoa perde o fôlego e a referência visual;
- * a fala é cortada na maior pausa interna disponível.
+ * Teto por fala.
+ *
+ * Seis segundos é o que se dubla de uma vez sem perder o fôlego nem a
+ * referência visual. Eram doze, e blocos desse tamanho eram justamente os que
+ * engoliam a conversa inteira.
  */
-const MAX_SEGMENT_MS = 12_000
+const MAX_SEGMENT_MS = 6_000
+
+/**
+ * Fim de frase fecha a fala, mesmo sem pausa.
+ *
+ * É o sinal mais forte que a transcrição dá de troca de turno: "Do que você
+ * está falando?" seguido de outra frase é quase sempre outra pessoa
+ * respondendo. Sem esta regra, a pontuação era ignorada e a decisão ficava só
+ * no silêncio entre as falas — que num diálogo rápido praticamente não existe.
+ */
+function terminaFrase(texto: string): boolean {
+  return /[.!?…:]["')\]]?\s*$/.test(texto)
+}
 
 export function segmentsFromTranscript(
   chunks: readonly TranscribedChunk[],
@@ -47,7 +63,10 @@ export function segmentsFromTranscript(
     const cabeNoAnterior =
       anterior !== undefined &&
       chunk.startMs - anterior.endMs <= MERGE_GAP_MS &&
-      chunk.endMs - anterior.startMs <= MAX_SEGMENT_MS
+      chunk.endMs - anterior.startMs <= MAX_SEGMENT_MS &&
+      // A frase anterior já fechou: emendar aqui juntaria a pergunta de um
+      // personagem com a resposta do outro na mesma fala.
+      !terminaFrase(anterior.text)
 
     if (anterior && cabeNoAnterior) {
       anterior.endMs = Math.max(anterior.endMs, chunk.endMs)

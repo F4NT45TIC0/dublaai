@@ -36,6 +36,54 @@ describe('segmentsFromTranscript', () => {
     expect(segments.map((s) => s.text)).toEqual(['Bom dia', 'Você chegou tarde'])
   })
 
+  it('não junta a pergunta de um personagem com a resposta do outro', () => {
+    // O caso relatado: num diálogo rápido as falas vinham coladas e uma única
+    // "fala" continha o texto de dois ou três personagens.
+    const segments = segmentsFromTranscript(
+      [
+        { startMs: 0, endMs: 1_400, text: 'Do que você está falando?' },
+        { startMs: 1_500, endMs: 3_000, text: 'Você é um brinquedo!' },
+        { startMs: 3_100, endMs: 4_600, text: 'Eu sou o Buzz Lightyear.' },
+      ],
+      cena,
+      10_000,
+    )
+
+    expect(segments).toHaveLength(3)
+    expect(segments.map((s) => s.text)).toEqual([
+      'Do que você está falando?',
+      'Você é um brinquedo!',
+      'Eu sou o Buzz Lightyear.',
+    ])
+  })
+
+  it('ainda junta oração partida no meio, sem ponto final', () => {
+    const segments = segmentsFromTranscript(
+      [
+        { startMs: 0, endMs: 1_000, text: 'Neste momento, os limites' },
+        { startMs: 1_100, endMs: 2_200, text: 'da galáxia se abrem.' },
+      ],
+      cena,
+      10_000,
+    )
+
+    expect(segments).toHaveLength(1)
+    expect(segments[0]?.text).toBe('Neste momento, os limites da galáxia se abrem.')
+  })
+
+  it('uma pausa curta não basta para emendar depois do ponto', () => {
+    const segments = segmentsFromTranscript(
+      [
+        { startMs: 0, endMs: 1_000, text: 'Acabou.' },
+        { startMs: 1_050, endMs: 2_000, text: 'Vamos embora' },
+      ],
+      cena,
+      10_000,
+    )
+
+    expect(segments).toHaveLength(2)
+  })
+
   it('não deixa uma fala crescer sem fim', () => {
     // Uma sequência longa de frases coladas viraria um bloco impossível de
     // dublar de uma vez; o teto quebra em falas gerenciáveis.
