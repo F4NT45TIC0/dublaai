@@ -1439,7 +1439,16 @@ function LocalDubStage({
               onToggleSource={toggleSource}
               onSelect={goToSegment}
               onRecognizeAgain={openCastDialog}
-              onBackToSettings={() => handleModeChange('full')}
+              onBackToSettings={() => handleModeChange(multiplayer ? 'online' : 'full')}
+            />
+          ) : multiplayer && match.state ? (
+            <OnlineMatchPanel
+              match={match}
+              scene={onlineScene}
+              characters={characters}
+              videoId={selected.id}
+              loadVideoBlob={async () => await (await fetch(selected.url)).blob()}
+              onLeave={onLeaveMatch}
             />
           ) : reference && (state.matches('idle') || state.matches('preview')) ? (
             <details open className="flex flex-col justify-between h-full border-2 border-ink-line bg-ink" data-testid="ajustes-da-cena">
@@ -1624,16 +1633,7 @@ function LocalDubStage({
           <LevelMeter peak={recorder.level} recording={state.matches('recording')} />
         )}
 
-        {multiplayer ? (
-          <OnlineMatchPanel
-            match={match}
-            scene={onlineScene}
-            characters={characters}
-            videoId={selected.id}
-            loadVideoBlob={async () => await (await fetch(selected.url)).blob()}
-            onLeave={onLeaveMatch}
-          />
-        ) : null}
+
 
         {state.matches('idle') &&
         recorder.supported &&
