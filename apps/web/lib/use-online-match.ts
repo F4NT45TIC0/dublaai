@@ -31,6 +31,7 @@ export interface OnlineMatchScene {
   readonly videoName: string
   readonly durationMs: number
   readonly segments: readonly MatchSegment[]
+  readonly characterNames?: readonly string[]
   /** Presente quando a cena foi aberta por link. */
   readonly videoUrl?: string
 }

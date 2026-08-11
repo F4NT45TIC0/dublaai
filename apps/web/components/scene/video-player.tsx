@@ -10,6 +10,7 @@ export interface VideoPlayerHandle {
   restart: () => void
   seekMs: (ms: number) => void
   setMuted: (muted: boolean) => void
+  setVolume: (volume: number) => void
   /** `true` quando a janela pedida já está no buffer (§59). */
   isBuffered: (fromMs: number, toMs: number) => boolean
 }
@@ -21,7 +22,7 @@ export interface VideoPlayerProps {
   readonly posterSrc?: string
   readonly durationMs: number
   readonly title: string
-  /** Esconde os controles durante a gravação — nada pode distrair (§3). */
+  /** Esconde os controles enquanto a mídia é comandada pelo fluxo de gravação. */
   readonly controlsHidden?: boolean
   readonly onReadyChange?: (ready: boolean) => void
   readonly onEnded?: () => void
@@ -37,8 +38,8 @@ export interface VideoPlayerProps {
  * parte de baixo do quadro justamente onde a legenda precisa estar.
  *
  * As cenas do catálogo usam vídeo mudo + `referenceAudioSrc`; vídeos enviados
- * podem trazer a própria faixa. Durante a dublagem, `controlsHidden` silencia
- * ambos para o áudio original não vazar na captura.
+ * podem trazer a própria faixa. `controlsHidden` cuida apenas da interface: o
+ * fluxo de gravação decide mute e volume explicitamente pelo handle.
  */
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function VideoPlayer(
   {
@@ -58,6 +59,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   const referenceAudioRef = useRef<HTMLAudioElement | null>(null)
   const referencePlaybackRef = useRef(false)
   const explicitlyMutedRef = useRef(false)
+  const volumeRef = useRef(1)
   const [playing, setPlaying] = useState(false)
   const [buffering, setBuffering] = useState(true)
   const [progress, setProgress] = useState(0)
@@ -104,7 +106,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     if (!video) return
 
     const audio = referenceAudioRef.current
-    referencePlaybackRef.current = Boolean(audio) && !controlsHidden && !explicitlyMutedRef.current
+    referencePlaybackRef.current = Boolean(audio) && !explicitlyMutedRef.current
 
     if (!referencePlaybackRef.current || !audio) {
       await video.play()
@@ -135,7 +137,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
       referencePlaybackRef.current = false
       audio.pause()
     }
-  }, [controlsHidden, seekReferenceAudio])
+  }, [seekReferenceAudio])
 
   const pauseMedia = useCallback(() => {
     referencePlaybackRef.current = false
@@ -181,21 +183,40 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
       setMuted: (muted: boolean) => {
         explicitlyMutedRef.current = muted
         const video = videoRef.current
-        if (video) video.muted = muted || controlsHidden || Boolean(referenceAudioSrc)
+        if (video) video.muted = muted || Boolean(referenceAudioSrc)
         if (muted) {
           referencePlaybackRef.current = false
           referenceAudioRef.current?.pause()
+          return
         }
+
+        const audio = referenceAudioRef.current
+        if (video && audio && !video.paused) {
+          referencePlaybackRef.current = true
+          seekReferenceAudio()
+          void audio.play().catch(() => {
+            referencePlaybackRef.current = false
+            audio.pause()
+          })
+        }
+      },
+      setVolume: (volume: number) => {
+        const normalized = Math.min(1, Math.max(0, volume))
+        volumeRef.current = normalized
+        const video = videoRef.current
+        if (video) video.volume = normalized
+        const audio = referenceAudioRef.current
+        if (audio) audio.volume = normalized
       },
       isBuffered,
     }),
     [
-      controlsHidden,
       isBuffered,
       pauseMedia,
       playMedia,
       referenceAudioSrc,
       restartMedia,
+      seekReferenceAudio,
       seekMedia,
     ],
   )
@@ -203,14 +224,12 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
   useEffect(() => {
     const video = videoRef.current
     if (video) {
-      video.muted =
-        explicitlyMutedRef.current || controlsHidden || Boolean(referenceAudioSrc)
+      video.muted = explicitlyMutedRef.current || Boolean(referenceAudioSrc)
+      video.volume = volumeRef.current
     }
-    if (controlsHidden) {
-      referencePlaybackRef.current = false
-      referenceAudioRef.current?.pause()
-    }
-  }, [controlsHidden, referenceAudioSrc])
+    const audio = referenceAudioRef.current
+    if (audio) audio.volume = volumeRef.current
+  }, [referenceAudioSrc])
 
   useEffect(() => {
     const video = videoRef.current
@@ -221,7 +240,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
     }
     const handlePlaying = () => {
       const audio = referenceAudioRef.current
-      if (!referencePlaybackRef.current || controlsHidden || !audio) return
+      if (!referencePlaybackRef.current || !audio) return
       syncReferenceAudio()
       void audio.play().catch(() => {
         referencePlaybackRef.current = false
@@ -245,12 +264,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
       const audio = referenceAudioRef.current
       if (!audio) return
       seekReferenceAudio()
-      if (
-        referencePlaybackRef.current &&
-        !video.paused &&
-        !controlsHidden &&
-        !explicitlyMutedRef.current
-      ) {
+      if (referencePlaybackRef.current && !video.paused && !explicitlyMutedRef.current) {
         void audio.play().catch(() => {
           referencePlaybackRef.current = false
           audio.pause()
@@ -300,15 +314,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(funct
       video.removeEventListener('ended', handleEnded)
       video.removeEventListener('error', handleError)
     }
-  }, [
-    controlsHidden,
-    durationMs,
-    onEnded,
-    onError,
-    onReadyChange,
-    seekReferenceAudio,
-    syncReferenceAudio,
-  ])
+  }, [durationMs, onEnded, onError, onReadyChange, seekReferenceAudio, syncReferenceAudio])
 
   useEffect(() => {
     const audio = referenceAudioRef.current

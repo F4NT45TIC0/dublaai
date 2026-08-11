@@ -11,9 +11,11 @@ import {
 import { Button, ErrorState, ScoreCard, Tag } from '@dubla/ui'
 import { AttemptPlayback } from '@/components/dub/attempt-playback'
 import { Countdown } from '@/components/dub/countdown'
+import { CharacterSetupDialog } from '@/components/dub/character-setup-dialog'
 import { LevelMeter } from '@/components/dub/level-meter'
 import { SegmentHud, type SegmentPhase } from '@/components/dub/segment-hud'
 import { ModePicker } from '@/components/dub/mode-picker'
+import { SceneReviewPanel } from '@/components/dub/scene-review-panel'
 import { TakeStrip, type TakeStripCell } from '@/components/dub/take-strip'
 import { StitchedPlayback } from '@/components/dub/stitched-playback'
 import { SubtitleRenderer } from '@/components/scene/subtitle-renderer'
@@ -600,6 +602,8 @@ const MODE_LABELS: Record<TakeMode, string> = {
   online: 'Multiplayer',
 }
 
+const RECORDING_REFERENCE_VOLUME = 0.12
+
 function LocalDubStage({
   selected,
   onInteractionLockChange,
@@ -641,7 +645,14 @@ function LocalDubStage({
   const stepSegmentRef = useRef<((delta: number) => void) | null>(null)
 
   /** Quantos personagens a cena tem. Quem sabe é a pessoa, não o algoritmo. */
-  const [voiceCount, setVoiceCount] = useState(1)
+  const [voiceCount, setVoiceCount] = useState(2)
+  const [characterNames, setCharacterNames] = useState<readonly string[]>([
+    'Personagem 1',
+    'Personagem 2',
+  ])
+  const [castDialogOpen, setCastDialogOpen] = useState(false)
+  const [castDialogBusy, setCastDialogBusy] = useState(false)
+  const transcriptionAbortRef = useRef<AbortController | null>(null)
 
   const [takeMode, setTakeMode] = useState<TakeMode>(multiplayer ? 'online' : 'full')
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0)
@@ -766,59 +777,107 @@ function LocalDubStage({
    * uma dezena de MB na primeira vez, e nem todo mundo quer legenda — obrigar
    * o download antes de deixar a pessoa dublar inverteria a prioridade.
    */
-  const runTranscription = useCallback(() => {
-    if (!reference) return
-    setTranscription({ phase: 'running', loadedRatio: 0 })
+  const runTranscription = useCallback(
+    async (names: readonly string[]) => {
+      if (!reference) return
+      transcriptionAbortRef.current?.abort()
+      const controller = new AbortController()
+      transcriptionAbortRef.current = controller
+      setTranscription({ phase: 'running', loadedRatio: 0 })
+      const count = Math.max(1, names.length)
+      const withCast = (segments: readonly SpeakerSegment[]) =>
+        segments.map((segment, index) => ({
+          ...segment,
+          // O Whisper reconhece texto, não quem falou. Alternar é apenas um
+          // ponto de partida previsível; o painel deixa cada fala corrigível.
+          characterId: `voz-${String((index % count) + 1)}`,
+        }))
 
-    const transcribe = async () => {
       try {
         // O vídeo (enviado ou baixado da URL) já vive como object URL local,
         // então isto lê da memória da aba — não há requisição de rede aqui.
-        const video = await (await fetch(selected.url)).blob()
+        const video = await (await fetch(selected.url, { signal: controller.signal })).blob()
         const audio = await decodeVideoMonoAudio(video, selected.durationMs)
+        if (controller.signal.aborted) return
         const chunks = await transcribeReference(
           audio.samples,
           audio.sampleRate,
           ({ loadedRatio }) => {
-            setTranscription({ phase: 'running', loadedRatio })
+            if (!controller.signal.aborted) setTranscription({ phase: 'running', loadedRatio })
           },
+          controller.signal,
         )
 
         // Preferimos recortar a cena pela transcrição: o Whisper corta onde a
         // FRASE acaba, que é a unidade que se dubla. Só quando ele não entende
         // nada é que caímos de volta nos trechos do detector de energia.
-        const doTexto = segmentsFromTranscript(chunks, selected.id, selected.durationMs)
-        if (doTexto.length > 0) {
-          setTranscriptSegments(doTexto)
+        let recognized = withCast(
+          segmentsFromTranscript(chunks, selected.id, selected.durationMs),
+        )
+        // Uma sala precisa de dois turnos/vozes. Se o Whisper fundiu o diálogo
+        // inteiro numa frase, o detector local ainda pode oferecer cortes
+        // revisáveis em vez de bloquear a criação sem explicação.
+        if (multiplayer && count === 2 && recognized.length < 2) {
+          const fallback = withCast(orderSegments(reference.segments))
+          if (fallback.length >= 2) recognized = fallback
+        }
+        if (recognized.length > 0) {
+          setTranscriptSegments(recognized)
           const entries: Record<string, string> = {}
-          for (const segment of doTexto) entries[segment.id] = segment.text
+          for (const segment of recognized) entries[segment.id] = segment.text
           mergeTexts(entries)
           setActiveSegmentIndex(0)
-          setTranscription({ phase: 'done', filled: doTexto.length, missing: 0 })
+          playerRef.current?.seekMs(Math.max(0, (recognized[0]?.startMs ?? 0) - 400))
+          if (multiplayer && count === 2 && recognized.length < 2) {
+            setTranscription({
+              phase: 'failed',
+              message:
+                'Esta cena tem apenas uma fala. Para uma partida, escolha um trecho com ao menos duas falas.',
+            })
+            return
+          }
+          setTranscription({ phase: 'done', filled: recognized.length, missing: 0 })
           return
         }
 
         const base = orderSegments(reference.segments)
-        const described = assignTranscript(base, chunks)
+        const described = withCast(assignTranscript(base, chunks))
         const missing = untranscribedCount(base, described)
+        setTranscriptSegments(described)
 
         const entries: Record<string, string> = {}
         for (const [index, segment] of described.entries()) {
           if (segment.text !== base[index]?.text) entries[segment.id] = segment.text
         }
         mergeTexts(entries)
+        setActiveSegmentIndex(0)
+        playerRef.current?.seekMs(Math.max(0, (described[0]?.startMs ?? 0) - 400))
         setTranscription({ phase: 'done', filled: described.length - missing, missing })
       } catch (cause) {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return
+        const fallback = withCast(orderSegments(reference.segments))
+        setTranscriptSegments(fallback)
+        setActiveSegmentIndex(0)
+        playerRef.current?.seekMs(Math.max(0, (fallback[0]?.startMs ?? 0) - 400))
         setTranscription({
           phase: 'failed',
           message:
-            cause instanceof Error ? cause.message : 'Não conseguimos transcrever este vídeo.',
+            cause instanceof Error
+              ? `${cause.message} Criamos cortes aproximados para você revisar manualmente.`
+              : 'Não conseguimos transcrever este vídeo. Criamos cortes aproximados para você revisar manualmente.',
         })
+      } finally {
+        if (transcriptionAbortRef.current === controller) transcriptionAbortRef.current = null
       }
-    }
+    },
+    [mergeTexts, multiplayer, reference, selected.durationMs, selected.id, selected.url],
+  )
 
-    void transcribe()
-  }, [mergeTexts, reference, selected.durationMs, selected.id, selected.url])
+  useEffect(() => {
+    return () => {
+      transcriptionAbortRef.current?.abort()
+    }
+  }, [])
 
   /** Trechos em ordem, com o texto digitado no lugar do rótulo genérico. */
   const orderedSegments = useMemo(() => {
@@ -849,11 +908,16 @@ function LocalDubStage({
     return ids.map((id, index) => ({
       id,
       workId: selected.id,
-      name: id === 'reference-voice' ? 'VOZ' : `VOZ ${id.replace('voz-', '')}`,
+      name:
+        id === 'reference-voice'
+          ? 'VOZ'
+          : (match.state?.characterNames?.[Number(id.replace('voz-', '')) - 1] ??
+            characterNames[Number(id.replace('voz-', '')) - 1] ??
+            `VOZ ${id.replace('voz-', '')}`),
       colorToken: `character-${String((index % 6) + 1)}`,
       patternToken: patterns[index % patterns.length] ?? 'solid',
     }))
-  }, [orderedSegments, selected.id])
+  }, [characterNames, match.state?.characterNames, orderedSegments, selected.id])
 
   /**
    * Cena da partida online.
@@ -867,6 +931,7 @@ function LocalDubStage({
       videoName: selected.fileName,
       durationMs: Math.round(selected.durationMs),
       ...(selected.sourceUrl === undefined ? {} : { videoUrl: selected.sourceUrl }),
+      ...(characterNames.length === 2 ? { characterNames } : {}),
       segments: orderedSegments.map((segment) => ({
         id: segment.id,
         characterId: segment.characterId,
@@ -875,7 +940,14 @@ function LocalDubStage({
         text: segment.text.slice(0, 300),
       })),
     }),
-    [orderedSegments, selected.durationMs, selected.fileName, selected.id, selected.sourceUrl],
+    [
+      characterNames,
+      orderedSegments,
+      selected.durationMs,
+      selected.fileName,
+      selected.id,
+      selected.sourceUrl,
+    ],
   )
   /** Tomadas da partida, dos dois jogadores, prontas para a costura. */
   const onlineTakes = useMemo(() => {
@@ -994,11 +1066,16 @@ function LocalDubStage({
     // No modo fala-a-fala a tomada não começa no zero da cena.
     if (fromMs > 0) player.seekMs(fromMs)
     else player.restart()
+    player.setVolume(RECORDING_REFERENCE_VOLUME)
     player.setMuted(true)
     try {
       await player.play()
+      // Começar mudo mantém o `play()` compatível com autoplay; assim que a
+      // imagem roda, liberamos a referência em volume baixo.
+      player.setMuted(false)
       return true
     } catch {
+      player.setVolume(1)
       player.setMuted(false)
       return false
     }
@@ -1006,11 +1083,8 @@ function LocalDubStage({
 
   const stopVideo = useCallback(() => {
     playerRef.current?.pause()
+    playerRef.current?.setVolume(1)
     playerRef.current?.setMuted(false)
-  }, [])
-
-  const seekVideo = useCallback((ms: number) => {
-    playerRef.current?.seekMs(ms)
   }, [])
 
   const isVideoBuffered = useCallback(() => {
@@ -1041,6 +1115,60 @@ function LocalDubStage({
   const { state } = recorder
   const isRecording = state.matches('recording')
   const stopRecording = recorder.stop
+
+  const openCastDialog = useCallback(() => {
+    if (castDialogBusy) return
+    setCastDialogOpen(true)
+  }, [castDialogBusy])
+
+  const handleModeChange = useCallback(
+    (mode: TakeMode) => {
+      if (mode === 'segment') {
+        openCastDialog()
+        return
+      }
+      transcriptionAbortRef.current?.abort()
+      setTakeMode(mode)
+    },
+    [openCastDialog],
+  )
+
+  const confirmCast = useCallback(
+    (names: readonly string[]) => {
+      const normalized = names.map(
+        (name, index) => name.trim() || `Personagem ${String(index + 1)}`,
+      )
+      setCastDialogBusy(true)
+      void (async () => {
+        transcriptionAbortRef.current?.abort()
+        await recorder.clearAttempts()
+
+        // Toda nova entrada em fala-a-fala é uma sessão limpa: nenhuma
+        // tomada, texto ou escolha antiga reaparece por causa do mesmo arquivo.
+        try {
+          localStorage.removeItem(`dublaai:falas:${selected.id}`)
+          localStorage.removeItem(`dublaai:fontes:${selected.id}`)
+        } catch {
+          // Falha no armazenamento não impede reiniciar a sessão visível.
+        }
+        setTexts({})
+        setSources({})
+        setTranscriptSegments(null)
+        setTranscription({ phase: 'idle' })
+        setActiveSegmentIndex(0)
+        setVoiceCount(normalized.length)
+        setCharacterNames(normalized)
+        if (!multiplayer) setTakeMode('segment')
+        playerRef.current?.seekMs(0)
+        setCastDialogOpen(false)
+        setCastDialogBusy(false)
+        await runTranscription(normalized)
+      })().catch(() => {
+        setCastDialogBusy(false)
+      })
+    },
+    [multiplayer, recorder, runTranscription, selected.id],
+  )
 
   /**
    * Encerra a tomada ao fim da janela da fala (o vídeo segue rodando; sem
@@ -1171,8 +1299,6 @@ function LocalDubStage({
     }
   }, [match.state?.takes, previewSegmentId, sendRecorder, takeMode])
 
-  const liveWaveformActive =
-    state.matches('preparing') || state.matches('countdown') || state.matches('recording')
   const workflowLocked =
     state.matches('requestingPermission') ||
     state.matches('preparing') ||
@@ -1181,6 +1307,9 @@ function LocalDubStage({
     state.matches('stopping') ||
     state.matches('analyzing')
   const mediaInteractionLocked = workflowLocked || exportingVideo
+  const showSceneReview =
+    !match.state && (takeMode === 'segment' || (multiplayer && transcription.phase !== 'idle'))
+  const reviewedSegments = transcriptSegments ? orderedSegments : []
 
   useEffect(() => {
     onInteractionLockChange(mediaInteractionLocked)
@@ -1194,6 +1323,17 @@ function LocalDubStage({
 
   return (
     <section className="surface-dark -mx-4 flex flex-col gap-6 px-4 py-8 sm:-mx-8 sm:px-8">
+      <CharacterSetupDialog
+        open={castDialogOpen}
+        busy={castDialogBusy}
+        initialNames={characterNames}
+        {...(multiplayer ? { fixedCount: 2 } : {})}
+        onCancel={() => {
+          if (!castDialogBusy) setCastDialogOpen(false)
+        }}
+        onConfirm={confirmCast}
+      />
+
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <p className="font-body text-xs font-bold uppercase tracking-[0.16em] text-muted">
@@ -1206,13 +1346,14 @@ function LocalDubStage({
         <div className="flex flex-wrap gap-2">
           <Tag tone="accent">{formatTimecode(selected.durationMs)}</Tag>
           <Tag>{formatFileSize(selected.fileSize)}</Tag>
-          <Tag tone={reference ? 'ok' : 'warn'}>
-            {reference ? 'Referência analisada' : 'Sem referência sonora'}
-          </Tag>
         </div>
       </div>
 
-      {takeMode === 'segment' && activeSegment && recorder.supported ? (
+      {takeMode === 'segment' &&
+      transcription.phase !== 'running' &&
+      transcriptSegments &&
+      activeSegment &&
+      recorder.supported ? (
         <SegmentHud
           segment={activeSegment}
           index={activeSegmentIndex}
@@ -1254,18 +1395,42 @@ function LocalDubStage({
         </div>
       ) : null}
 
-      <VideoPlayer
-        ref={attachVideo}
-        src={selected.url}
-        durationMs={selected.durationMs}
-        title={`Vídeo para dublagem: ${selected.fileName}`}
-        controlsHidden={mediaInteractionLocked}
-        onEnded={() => {
-          recorder.send({ type: 'VIDEO_ENDED' })
-        }}
-      />
+      <div
+        className={
+          showSceneReview ? 'grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]' : ''
+        }
+      >
+        <VideoPlayer
+          ref={attachVideo}
+          src={selected.url}
+          durationMs={selected.durationMs}
+          title={`Vídeo para dublagem: ${selected.fileName}`}
+          controlsHidden={mediaInteractionLocked}
+          onEnded={() => {
+            recorder.send({ type: 'VIDEO_ENDED' })
+          }}
+        />
 
-      {takeMode === 'segment' && activeSegment ? (
+        {showSceneReview ? (
+          <SceneReviewPanel
+            segments={reviewedSegments}
+            texts={texts}
+            characterNames={characterNames}
+            voiceCount={voiceCount}
+            sources={sources}
+            transcription={transcription}
+            activeIndex={activeSegmentIndex}
+            disabled={workflowLocked || exportingVideo}
+            onTextChange={updateText}
+            onCycleVoice={cycleVoice}
+            onToggleSource={toggleSource}
+            onSelect={goToSegment}
+            onRecognizeAgain={openCastDialog}
+          />
+        ) : null}
+      </div>
+
+      {takeMode === 'segment' && transcriptSegments && activeSegment ? (
         <TakeStrip
           segments={orderedSegments}
           cells={stripCells}
@@ -1298,13 +1463,11 @@ function LocalDubStage({
       ) : null}
 
       {reference ? (
-        <details className="border-2 border-ink-line">
-          <summary className="min-h-12 cursor-pointer px-4 py-3 font-display text-sm uppercase tracking-widest">
-            Forma de onda da cena
-          </summary>
+        state.matches('recording') ? (
           <section
-            className="flex flex-col gap-3 border-t-2 border-ink-line p-4"
+            className="flex flex-col gap-3 border-2 border-ink-line p-4"
             aria-labelledby="referencia-enviada-titulo"
+            data-testid="recording-voice-reference"
           >
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
@@ -1328,13 +1491,8 @@ function LocalDubStage({
                 durationMs={selected.durationMs}
                 mediaTimeRef={mediaTimeRef}
                 liveOverlayRef={recorder.liveWaveformRef}
-                liveOverlayActive={liveWaveformActive}
-                onSeek={mediaInteractionLocked ? undefined : seekVideo}
-                label={
-                  liveWaveformActive
-                    ? 'Forma de onda da referência com sua voz ao vivo'
-                    : 'Forma de onda da referência do vídeo enviado'
-                }
+                liveOverlayActive
+                label="Forma de onda da referência com sua voz ao vivo"
               />
             </div>
             <div
@@ -1349,12 +1507,16 @@ function LocalDubStage({
               </span>
             </div>
             <p className="text-xs text-muted">
+              Use fones de ouvido: o áudio original toca baixo como guia e, nos alto-falantes, pode
+              vazar para o microfone.
+            </p>
+            <p className="text-xs text-muted">
               A pontuação compara sua voz com o áudio completo do vídeo. Música, efeitos e várias
               pessoas podem reduzir a precisão. Articulação fica indisponível porque esta cena não
               possui o corpus necessário para uma calibração honesta.
             </p>
           </section>
-        </details>
+        ) : null
       ) : (
         <p className="border-2 border-warn px-4 py-3 text-sm text-warn" role="status">
           {unavailableReason}
@@ -1407,9 +1569,7 @@ function LocalDubStage({
               {MODE_LABELS[takeMode]} · {subtitles.length}/{orderedSegments.length} falas escritas
             </summary>
             <div className="flex flex-col gap-4 border-t-2 border-ink-line p-4">
-              {!multiplayer && orderedSegments.length > 1 ? (
-                <ModePicker value={takeMode} onChange={setTakeMode} />
-              ) : null}
+              {!multiplayer ? <ModePicker value={takeMode} onChange={handleModeChange} /> : null}
 
               {multiplayer && match.state ? (
                 <p className="text-xs text-muted">
@@ -1418,163 +1578,29 @@ function LocalDubStage({
                 </p>
               ) : null}
 
-              {!match.state ? (
+              {!match.state && multiplayer ? (
                 <p className="text-xs text-muted">
-                  {multiplayer
-                    ? 'As falas são reconhecidas primeiro neste navegador. Quando você gerar o código, o vídeo e esta configuração serão compartilhados somente com a partida. Na primeira vez, o reconhecimento baixa cerca de 90 MB e fica guardado para as próximas.'
-                    : 'As falas podem ser reconhecidas automaticamente aqui mesmo, no seu navegador — o vídeo não sai do aparelho. Na primeira vez, o reconhecimento de fala baixa cerca de 90 MB e fica guardado para as próximas. Ele erra às vezes; todo campo continua editável.'}
+                  Diga quem participa da cena e o reconhecimento começa sozinho. Depois confira as
+                  falas ao lado do vídeo antes de criar o código da partida.
                 </p>
               ) : null}
 
-              {!match.state ? (
+              {!match.state && multiplayer ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     variant="secondary"
                     disabled={transcription.phase === 'running'}
                     data-testid="local-transcrever"
-                    onClick={runTranscription}
+                    onClick={openCastDialog}
                   >
                     {transcription.phase === 'running'
                       ? 'Reconhecendo…'
                       : transcription.phase === 'done'
                         ? 'Reconhecer de novo'
-                        : 'Descrever as falas'}
+                        : 'Definir personagens e reconhecer'}
                   </Button>
-
-                  {transcription.phase === 'running' ? (
-                    <p className="text-xs text-muted" role="status">
-                      {transcription.loadedRatio > 0 && transcription.loadedRatio < 1
-                        ? `Baixando o reconhecimento de fala… ${String(Math.round(transcription.loadedRatio * 100))}%`
-                        : 'Ouvindo o vídeo. Em vídeos longos isso leva alguns minutos.'}
-                    </p>
-                  ) : null}
-
-                  {transcription.phase === 'done' ? (
-                    <p className="text-xs text-muted" role="status">
-                      {transcription.filled} de {orderedSegments.length} falas reconhecidas
-                      {transcription.missing > 0
-                        ? ` — ${String(transcription.missing)} ${transcription.missing === 1 ? 'continuou' : 'continuaram'} sem texto e ${transcription.missing === 1 ? 'pode' : 'podem'} ser preenchida${transcription.missing === 1 ? '' : 's'} à mão.`
-                        : '.'}
-                    </p>
-                  ) : null}
                 </div>
               ) : null}
-
-              {!match.state && transcription.phase === 'failed' ? (
-                <p className="border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
-                  {transcription.message} Você ainda pode escrever as falas à mão.
-                </p>
-              ) : null}
-              {!match.state && takeMode === 'segment' ? (
-                <p className="text-xs text-muted">
-                  Marque como <strong>voz original</strong> os trechos que você não quer dublar. Dá
-                  para gravar só um personagem e deixar o outro falando como no vídeo.
-                </p>
-              ) : null}
-
-              {!match.state && transcriptSegments ? (
-                <div className="flex flex-wrap items-center gap-3 border-2 border-ink-line p-3">
-                  <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
-                    Quantos personagens falam
-                  </span>
-                  <div className="flex items-center gap-1">
-                    {([1, 2, 3, 4] as const).map((quantidade) => (
-                      <button
-                        key={quantidade}
-                        type="button"
-                        aria-pressed={voiceCount === quantidade}
-                        data-testid={`vozes-${String(quantidade)}`}
-                        onClick={() => {
-                          setVoiceCount(quantidade)
-                        }}
-                        className={`min-h-11 min-w-11 border-2 font-display text-sm uppercase ${
-                          voiceCount === quantidade
-                            ? 'border-accent bg-accent text-paper'
-                            : 'border-ink-line text-muted hover:border-paper hover:text-paper'
-                        }`}
-                      >
-                        {quantidade}
-                      </button>
-                    ))}
-                  </div>
-                  {/*
-                    A separação é manual porque agrupar vozes por timbre exige
-                    um modelo que não temos. O que havia antes chutava e errava
-                    tanto que dividia a mesma pessoa em quatro personagens —
-                    um toque por fala é mais rápido do que corrigir isso.
-                  */}
-                  <p className="w-full text-xs text-muted">
-                    {voiceCount === 1
-                      ? 'Uma voz só. Aumente aqui se a cena tem mais de um personagem falando.'
-                      : 'Toque no personagem ao lado de cada fala para dizer de quem ela é.'}
-                  </p>
-                </div>
-              ) : null}
-
-              {!match.state
-                ? orderedSegments.map((segment, index) => {
-                    const usaOriginal = isOriginal(sources, segment.id)
-                    return (
-                      <div
-                        key={segment.id}
-                        className="flex flex-col gap-2 border-2 border-ink-line p-3"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] tabular-nums text-muted">
-                            {index + 1}. {formatTimecode(segment.startMs)} –{' '}
-                            {formatTimecode(segment.endMs)}
-                          </span>
-                          {transcriptSegments && voiceCount > 1 ? (
-                            <button
-                              type="button"
-                              data-testid={`fala-voz-${String(index)}`}
-                              title="Trocar o personagem desta fala"
-                              onClick={() => {
-                                cycleVoice(segment.id)
-                              }}
-                              className="min-h-11 border-2 border-ink-line px-2 font-display text-[0.625rem] uppercase tracking-widest text-paper hover:border-paper"
-                            >
-                              {segment.characterId.replace('voz-', 'Voz ')}
-                            </button>
-                          ) : null}
-
-                          {takeMode === 'segment' ? (
-                            <button
-                              type="button"
-                              aria-pressed={usaOriginal}
-                              data-testid={`local-fonte-${String(index)}`}
-                              onClick={() => {
-                                toggleSource(segment.id)
-                              }}
-                              className={`min-h-11 border-2 px-3 font-display text-[0.625rem] uppercase tracking-widest ${
-                                usaOriginal
-                                  ? 'border-accent bg-accent text-paper'
-                                  : 'border-ink-line text-muted hover:border-paper hover:text-paper'
-                              }`}
-                            >
-                              {usaOriginal ? 'Voz original' : 'Vou dublar'}
-                            </button>
-                          ) : null}
-                        </div>
-                        <label className="sr-only" htmlFor={`fala-${segment.id}`}>
-                          Texto do trecho {index + 1}
-                        </label>
-                        <input
-                          id={`fala-${segment.id}`}
-                          type="text"
-                          maxLength={300}
-                          value={texts[segment.id] ?? ''}
-                          placeholder="O que é dito neste trecho?"
-                          data-testid={`local-fala-${String(index)}`}
-                          onChange={(event) => {
-                            updateText(segment.id, event.target.value)
-                          }}
-                          className="min-h-11 border-2 border-ink-line bg-ink-soft px-3 font-body text-sm text-paper placeholder:text-muted"
-                        />
-                      </div>
-                    )
-                  })
-                : null}
             </div>
           </details>
         ) : null}

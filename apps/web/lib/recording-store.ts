@@ -206,6 +206,25 @@ export async function deleteAttempt(attempt: StoredAttempt): Promise<void> {
   }
 }
 
+/**
+ * Apaga somente as tentativas de uma cena.
+ *
+ * A limpeza do modo fala-a-fala não pode atingir gravações de outros
+ * vídeos que compartilham o mesmo banco local.
+ */
+export async function deleteAttemptsForScene(sceneId: string): Promise<void> {
+  try {
+    const db = await openDatabase()
+    const transaction = db.transaction(ATTEMPTS_STORE, 'readonly')
+    const index = transaction.objectStore(ATTEMPTS_STORE).index('sceneId')
+    const attempts = await promisify<StoredAttempt[]>(index.getAll(sceneId))
+
+    for (const attempt of attempts) await deleteAttempt(attempt)
+  } catch (error) {
+    throw toStorageError(error)
+  }
+}
+
 /** Apaga tudo. É o "excluir histórico" que o §42 exige. */
 export async function deleteAllAttempts(): Promise<void> {
   const db = await openDatabase()

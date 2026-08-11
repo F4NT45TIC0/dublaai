@@ -25,6 +25,7 @@ const createSchema = z.object({
   // endereço `javascript:` ou `data:` guardado aqui viraria arma na outra
   // ponta.
   videoUrl: z.url().startsWith('https://').max(2_000).optional(),
+  characterNames: z.array(z.string().trim().min(1).max(80)).length(2).optional(),
   segments: z
     .array(
       z.object({
@@ -55,7 +56,7 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: 'Dados da partida inválidos.' }, { status: 400 })
   }
 
-  const { hostId, videoId, videoName, durationMs, segments, videoUrl } = parsed.data
+  const { hostId, videoId, videoName, durationMs, segments, videoUrl, characterNames } = parsed.data
   if (charactersOf(segments).length !== MATCH_CHARACTER_COUNT) {
     return NextResponse.json(
       { error: 'A partida multiplayer precisa de uma cena com exatamente duas vozes.' },
@@ -79,6 +80,7 @@ export async function POST(request: Request): Promise<Response> {
     videoName,
     durationMs,
     segments,
+    ...(characterNames === undefined ? {} : { characterNames }),
     ...(videoUrl === undefined ? {} : { videoUrl }),
     players: [],
     takes: {},

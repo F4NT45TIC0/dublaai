@@ -26,6 +26,7 @@ import {
 } from '@dubla/shared'
 import type { AnalysisRequest, AnalysisResponse } from '@/workers/analysis.worker'
 import {
+  deleteAttemptsForScene,
   listAttempts,
   loadAudioUrl,
   saveAttempt,
@@ -119,6 +120,8 @@ export function useRecorder(options: UseRecorderOptions) {
   const lastGuardsRef = useRef<Partial<PreflightGuards>>({})
   const mountedRef = useRef(true)
   const cancelAnalysisRef = useRef<(() => void) | null>(null)
+  /** Invalida restaurações assíncronas iniciadas antes de uma limpeza. */
+  const restoreGenerationRef = useRef(0)
 
   const liveWaveformDurationMs = options.liveWaveformDurationMs ?? 0
   if (
@@ -166,13 +169,26 @@ export function useRecorder(options: UseRecorderOptions) {
   useEffect(() => {
     const mount = { alive: true }
     const urls: string[] = []
+    const generation = restoreGenerationRef.current
+
+    const discardUrls = () => {
+      for (const url of urls) URL.revokeObjectURL(url)
+    }
+
+    const restoreWasCancelled = () => !mount.alive || generation !== restoreGenerationRef.current
 
     void (async () => {
       const stored = await listAttempts(optionsRef.current.sceneId)
+      if (restoreWasCancelled()) return
       const restored: RecorderAttempt[] = []
 
       for (const entry of stored) {
         const url = await loadAudioUrl(entry)
+        if (restoreWasCancelled()) {
+          if (url) URL.revokeObjectURL(url)
+          discardUrls()
+          return
+        }
         if (!url) continue
         urls.push(url)
         restored.push({
@@ -186,8 +202,8 @@ export function useRecorder(options: UseRecorderOptions) {
         })
       }
 
-      if (!mount.alive) {
-        for (const url of urls) URL.revokeObjectURL(url)
+      if (restoreWasCancelled()) {
+        discardUrls()
         return
       }
       objectUrlsRef.current.push(...urls)
@@ -694,6 +710,48 @@ export function useRecorder(options: UseRecorderOptions) {
     send({ type: 'CANCEL' })
   }, [getService, send])
 
+  /**
+   * Recomeça a sessão da cena sem apagar tentativas de outros vídeos.
+   *
+   * A UI é limpa imediatamente; a remoção persistente acontece em seguida.
+   * Uma geração nova impede que uma leitura antiga do IndexedDB reponha os
+   * itens que acabaram de ser removidos.
+   */
+  const clearAttempts = useCallback(async (): Promise<void> => {
+    const sceneId = optionsRef.current.sceneId
+    restoreGenerationRef.current += 1
+
+    requestIdRef.current = ''
+    const cancelAnalysis = cancelAnalysisRef.current
+    cancelAnalysisRef.current = null
+    cancelAnalysis?.()
+    workerRef.current?.terminate()
+    workerRef.current = null
+
+    serviceRef.current?.disarm()
+    bufferRef.current.clear()
+    startContextTimeRef.current = 0
+    startFrameRef.current = 0
+    setLevel(0)
+    if (liveWaveformRef.current) resetLiveWaveform(liveWaveformRef.current)
+    optionsRef.current.onStopVideo()
+
+    const urls = objectUrlsRef.current
+    objectUrlsRef.current = []
+    for (const url of urls) URL.revokeObjectURL(url)
+    setAttempts([])
+    setStorageError(null)
+    send({ type: 'RESET' })
+
+    try {
+      await deleteAttemptsForScene(sceneId)
+    } catch (error) {
+      if (mountedRef.current) {
+        setStorageError(isDublaError(error) ? error.code : 'STORAGE_UNAVAILABLE')
+      }
+    }
+  }, [send])
+
   return {
     state,
     send,
@@ -709,6 +767,7 @@ export function useRecorder(options: UseRecorderOptions) {
     storageError,
     requestDub,
     cancel,
+    clearAttempts,
     stop: useCallback(() => {
       send({ type: 'STOP' })
     }, [send]),

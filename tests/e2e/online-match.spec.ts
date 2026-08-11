@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
+import { confirmCharacterSetup, mockLocalTranscription } from './helpers'
 
 const VALID_VIDEO = resolve(import.meta.dirname, 'fixtures/video-with-reference-audio.mp4')
 const CANONICAL_LINE = 'A fala canônica chegou pelo código'
@@ -20,7 +21,10 @@ async function abrirVideo(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'video-with-reference-audio.mp4' })).toBeVisible({
     timeout: 60_000,
   })
+  await mockLocalTranscription(page)
   await page.getByTestId('ajustes-da-cena').locator('summary').click()
+  await page.getByTestId('local-transcrever').click()
+  await confirmCharacterSetup(page)
   await page.getByTestId('local-fala-0').fill(CANONICAL_LINE)
 }
 
@@ -58,6 +62,7 @@ test.describe('partida online', () => {
       expect(codigo).toBeDefined()
 
       await paginaA.getByTestId('online-apelido').fill('Ana')
+      await expect(paginaA.getByTestId('online-personagem-voz-1')).toContainText('Burro')
       await paginaA.getByTestId('online-personagem-voz-1').click()
       await paginaA.getByTestId('online-confirmar-personagem').click()
       await expect(paginaA.getByTestId('online-aguardando-dupla')).toBeVisible({ timeout: 30_000 })
@@ -77,6 +82,7 @@ test.describe('partida online', () => {
 
       // A voz da Ana não aparece mais na lista: personagem tomado é tomado.
       await expect(paginaB.getByTestId('online-personagem-voz-1')).toHaveCount(0)
+      await expect(paginaB.getByTestId('online-personagem-voz-2')).toContainText('Shrek')
       await paginaB.getByTestId('online-apelido').fill('Bia')
       await paginaB.getByTestId('online-personagem-voz-2').click()
       await paginaB.getByTestId('online-confirmar-personagem').click()

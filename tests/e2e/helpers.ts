@@ -109,3 +109,70 @@ export async function instrumentTracks(page: Page): Promise<void> {
     }
   })
 }
+
+/**
+ * Evita baixar o Whisper (~90 MB) em cada caso E2E, sem interferir nos workers
+ * reais de áudio/análise usados pelo restante do fluxo.
+ */
+export async function mockLocalTranscription(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const NativeWorker = window.Worker
+
+    class FakeTranscriptionWorker extends EventTarget {
+      postMessage(message: { readonly requestId?: unknown }) {
+        const requestId = typeof message.requestId === 'string' ? message.requestId : ''
+        queueMicrotask(() => {
+          this.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                requestId,
+                kind: 'done',
+                ok: true,
+                chunks: Array.from({ length: 8 }, (_, index) => ({
+                  startMs: index * 1_000,
+                  endMs: index * 1_000 + 600,
+                  text: `Fala ${String(index + 1)}.`,
+                })),
+              },
+            }),
+          )
+        })
+      }
+
+      terminate() {
+        this.dispatchEvent(new Event('close'))
+      }
+    }
+
+    window.Worker = new Proxy(NativeWorker, {
+      construct() {
+        // Instalado somente depois que o vídeo terminou de ser preparado: o
+        // próximo worker é o Whisper. Restaurar imediatamente preserva o
+        // worker real da análise da gravação que acontece depois.
+        window.Worker = NativeWorker
+        return new FakeTranscriptionWorker()
+      },
+    })
+  })
+}
+
+/** Confirma o modal novo e espera a lista fala-a-fala ficar pronta. */
+export async function confirmCharacterSetup(
+  page: Page,
+  names: readonly string[] = ['Burro', 'Shrek'],
+): Promise<void> {
+  await expect(page.getByTestId('character-setup-dialog')).toBeVisible()
+  if (await page.getByTestId(`vozes-${String(names.length)}`).isVisible()) {
+    await page.getByTestId(`vozes-${String(names.length)}`).click()
+  }
+  for (const [index, name] of names.entries()) {
+    await page.getByTestId(`character-name-${String(index)}`).fill(name)
+  }
+  await page.getByTestId('character-setup-confirm').click()
+  await expect(page.getByTestId('scene-review-panel')).toContainText(
+    'Faça uma conferência rápida',
+    {
+      timeout: 20_000,
+    },
+  )
+}

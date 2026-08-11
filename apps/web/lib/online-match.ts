@@ -51,6 +51,8 @@ export interface MatchState {
   readonly videoName: string
   readonly durationMs: number
   readonly segments: readonly MatchSegment[]
+  /** Nomes escolhidos pelo anfitrião, na ordem de `charactersOf(segments)`. */
+  readonly characterNames?: readonly string[]
   readonly players: readonly MatchPlayer[]
   readonly takes: Readonly<Record<string, MatchTake | undefined>>
   /**

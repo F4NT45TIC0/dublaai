@@ -39,6 +39,7 @@ export async function createMatch(input: {
   videoName: string
   durationMs: number
   segments: readonly MatchSegment[]
+  characterNames?: readonly string[]
   videoUrl?: string
 }): Promise<{ code: string; state: MatchState; uploadAccess: MatchUploadAccess | null }> {
   const response = await fetch('/api/partidas', {

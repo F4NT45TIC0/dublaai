@@ -47,7 +47,8 @@ export function ModePicker({ value, disabled = false, onChange }: ModePickerProp
           Como você quer dublar
         </h2>
         <p className="mt-1 text-sm text-muted">
-          Dá para trocar a qualquer momento. O áudio original fica mudo enquanto você grava.
+          Dá para trocar a qualquer momento. A referência toca baixa enquanto você grava; use fones
+          para ela não entrar no microfone.
         </p>
       </div>
 
