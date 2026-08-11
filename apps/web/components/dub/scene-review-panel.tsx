@@ -29,6 +29,7 @@ export interface SceneReviewPanelProps {
   readonly onToggleSource: (segmentId: string) => void
   readonly onSelect: (index: number) => void
   readonly onRecognizeAgain: () => void
+  readonly onBackToSettings?: () => void
 }
 
 const LINES_PER_PAGE = 2
@@ -54,6 +55,7 @@ export function SceneReviewPanel({
   onToggleSource,
   onSelect,
   onRecognizeAgain,
+  onBackToSettings,
 }: SceneReviewPanelProps) {
   const titleId = useId()
   const [pageIndex, setPageIndex] = useState(() =>
@@ -90,21 +92,35 @@ export function SceneReviewPanel({
     <aside
       aria-labelledby={titleId}
       data-testid="scene-review-panel"
-      className={`flex min-h-0 flex-col border-2 border-ink-line bg-ink ${
-        segments.length > 0 ? 'h-[46rem] sm:h-[40rem]' : ''
-      }`}
+      className="flex h-full flex-col border-2 border-ink-line bg-ink overflow-hidden"
     >
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b-2 border-ink-line p-4">
-        <div>
-          <p className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.18em] text-accent">
-            Fala a fala
-          </p>
-          <h2 id={titleId} className="font-display text-xl uppercase">
-            Confira a cena
-          </h2>
-          <p className="mt-1 text-xs text-muted">
-            {segments.length} {segments.length === 1 ? 'fala encontrada' : 'falas encontradas'}
-          </p>
+      <header className="flex items-center justify-between gap-2 border-b-2 border-ink-line bg-ink-soft/30 px-3 py-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {onBackToSettings ? (
+            <button
+              type="button"
+              onClick={onBackToSettings}
+              title="Voltar aos ajustes da cena"
+              className="flex shrink-0 items-center justify-center gap-1 border-2 border-ink-line bg-ink-soft px-2 py-1 font-body text-[0.6875rem] font-bold uppercase tracking-wider text-paper transition-colors hover:border-accent hover:text-accent"
+            >
+              <span>←</span>
+              <span className="hidden sm:inline">Voltar</span>
+            </button>
+          ) : null}
+          <div className="min-w-0 truncate">
+            <div className="flex items-center gap-1.5 truncate">
+              <span className="font-body text-[0.625rem] font-bold uppercase tracking-[0.16em] text-accent shrink-0">
+                Fala a fala
+              </span>
+              <span className="text-muted text-xs shrink-0">·</span>
+              <h2 id={titleId} className="truncate font-display text-sm uppercase tracking-wide">
+                Confira a cena
+              </h2>
+            </div>
+            <p className="text-[0.625rem] text-muted truncate">
+              {segments.length} {segments.length === 1 ? 'fala encontrada' : 'falas encontradas'}
+            </p>
+          </div>
         </div>
         <Button
           size="sm"
@@ -112,6 +128,7 @@ export function SceneReviewPanel({
           disabled={disabled || running}
           data-testid="local-transcrever"
           onClick={onRecognizeAgain}
+          className="shrink-0 text-[0.6875rem] px-2.5 py-1"
         >
           {running
             ? 'Reconhecendo…'
@@ -122,7 +139,7 @@ export function SceneReviewPanel({
       </header>
 
       {running ? (
-        <div className="border-b-2 border-ink-line p-4" role="status" aria-live="polite">
+        <div className="border-b-2 border-ink-line p-3" role="status" aria-live="polite">
           <div className="flex items-center justify-between gap-3 text-xs text-muted">
             <span>
               {progress > 0 && progress < 100
@@ -138,24 +155,18 @@ export function SceneReviewPanel({
       ) : null}
 
       {transcription.phase === 'failed' ? (
-        <p className="m-4 border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
+        <p className="mx-3 my-2 border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
           {transcription.message} Você pode tentar de novo ou ajustar as falas manualmente.
         </p>
       ) : null}
 
       {transcription.phase === 'done' ? (
-        <div className="m-4 border-2 border-warn bg-warn/10 p-3" role="status">
-          <p className="font-display text-sm uppercase text-warn">Faça uma conferência rápida</p>
-          <p className="mt-1 text-xs text-paper/80">
-            Texto, cortes e personagem podem conter erros. Confira cada fala antes de gravar; todos
-            os campos abaixo podem ser corrigidos.
+        <div className="mx-3 my-2 border-2 border-warn bg-warn/10 p-2.5" role="status">
+          <p className="font-display text-[0.6875rem] font-bold uppercase tracking-wider text-warn">
+            Faça uma conferência rápida
           </p>
-          <p className="mt-2 text-[0.6875rem] text-muted">
-            {transcription.filled} reconhecida
-            {transcription.filled === 1 ? '' : 's'}
-            {transcription.missing > 0
-              ? ` · ${String(transcription.missing)} sem texto`
-              : ' · nenhuma ficou sem texto'}
+          <p className="mt-0.5 text-xs leading-snug text-paper/90">
+            Texto, cortes e personagem podem conter erros. Confira cada fala antes de gravar.
           </p>
         </div>
       ) : null}
@@ -163,7 +174,7 @@ export function SceneReviewPanel({
       {segments.length > 0 ? (
         <>
           <ol
-            className="grid min-h-0 flex-1 grid-rows-2 gap-2 overflow-hidden p-3"
+            className="flex min-h-0 flex-1 flex-col gap-3 p-4 overflow-y-auto"
             aria-label="Falas reconhecidas para revisar"
           >
             {visibleSegments.map(({ segment, index }) => {
@@ -172,12 +183,14 @@ export function SceneReviewPanel({
               return (
                 <li
                   key={segment.id}
-                  className={`flex min-h-0 flex-col gap-2 border-2 p-2 ${
-                    active ? 'border-accent bg-accent/5' : 'border-ink-line'
+                  className={`flex min-h-0 flex-col gap-2.5 border-2 p-3 transition-colors ${
+                    active
+                      ? 'border-accent bg-accent/5 ring-1 ring-accent/30'
+                      : 'border-ink-line bg-ink-soft/10 hover:border-paper/40'
                   }`}
                   data-active={active ? 'true' : undefined}
                 >
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center justify-between gap-2 min-w-0">
                     <button
                       type="button"
                       aria-current={active ? 'step' : undefined}
@@ -185,7 +198,7 @@ export function SceneReviewPanel({
                       onClick={() => {
                         onSelect(index)
                       }}
-                      className="min-h-11 flex-1 text-left font-body text-[0.6875rem] font-bold uppercase tracking-[0.12em] tabular-nums text-muted hover:text-paper disabled:opacity-40"
+                      className="truncate text-left font-body text-xs font-bold uppercase tracking-wider text-muted hover:text-paper disabled:opacity-40"
                     >
                       {index + 1}. {formatTimecode(segment.startMs)} –{' '}
                       {formatTimecode(segment.endMs)}
@@ -200,7 +213,7 @@ export function SceneReviewPanel({
                       onClick={() => {
                         onCycleVoice(segment.id)
                       }}
-                      className="min-h-11 border-2 border-ink-line px-2 font-display text-[0.625rem] uppercase tracking-widest text-paper hover:border-paper disabled:cursor-default disabled:opacity-70"
+                      className="shrink-0 border-2 border-ink-line px-2 py-1 font-display text-[0.625rem] uppercase tracking-widest text-paper hover:border-paper disabled:cursor-default disabled:opacity-70 max-w-[130px] truncate"
                     >
                       {nameForSegment(segment, characterNames)}
                     </button>
@@ -223,7 +236,7 @@ export function SceneReviewPanel({
                     onChange={(event) => {
                       onTextChange(segment.id, event.target.value)
                     }}
-                    className="min-h-11 w-full border-2 border-ink-line bg-ink-soft px-3 font-body text-sm text-paper placeholder:text-muted disabled:opacity-40"
+                    className="h-10 w-full min-w-0 border-2 border-ink-line bg-ink-soft px-3 font-body text-sm text-paper placeholder:text-muted focus:border-accent focus:outline-none disabled:opacity-40"
                   />
 
                   <button
@@ -234,9 +247,9 @@ export function SceneReviewPanel({
                     onClick={() => {
                       onToggleSource(segment.id)
                     }}
-                    className={`min-h-10 w-full border-2 px-3 font-display text-[0.625rem] uppercase tracking-widest disabled:opacity-40 ${
+                    className={`h-9 w-full border-2 px-3 font-display text-[0.6875rem] uppercase tracking-widest transition-colors disabled:opacity-40 ${
                       usaOriginal
-                        ? 'border-accent bg-accent text-paper'
+                        ? 'border-accent bg-accent font-bold text-paper'
                         : 'border-ink-line text-muted hover:border-paper hover:text-paper'
                     }`}
                   >
@@ -250,7 +263,7 @@ export function SceneReviewPanel({
           <nav
             aria-label="Páginas de falas"
             data-testid="scene-review-pagination"
-            className="grid grid-cols-[auto_1fr_auto] items-center gap-2 border-t-2 border-ink-line p-3"
+            className="mt-auto grid grid-cols-[auto_1fr_auto] items-center gap-2 border-t-2 border-ink-line p-4 bg-ink-soft/10"
           >
             <Button
               type="button"
@@ -273,7 +286,7 @@ export function SceneReviewPanel({
               <span className="block text-paper">
                 Página {currentPage + 1} de {pageCount}
               </span>
-              <span className="mt-1 block">
+              <span className="mt-0.5 block text-[0.625rem]">
                 Falas {firstVisibleIndex + 1}–{lastVisibleIndex} de {segments.length}
               </span>
             </p>

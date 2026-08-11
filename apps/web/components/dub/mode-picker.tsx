@@ -43,21 +43,15 @@ export function ModePicker({ value, disabled = false, onChange }: ModePickerProp
   return (
     <section aria-labelledby="modo-titulo" className="flex flex-col gap-3">
       <div>
-        <h2 id="modo-titulo" className="font-display text-2xl uppercase">
+        <h2 id="modo-titulo" className="font-display text-lg uppercase tracking-wide">
           Como você quer dublar
         </h2>
-        <p className="mt-1 text-sm text-muted">
-          Dá para trocar a qualquer momento. A referência toca baixa enquanto você grava; use fones
-          para ela não entrar no microfone.
+        <p className="mt-0.5 text-xs text-muted">
+          Dá para trocar a qualquer momento. A referência toca baixa enquanto você grava.
         </p>
       </div>
 
-      {/*
-        Radiogroup de verdade, e não uma fileira de botões: com leitor de tela a
-        pessoa ouve "opção 1 de 2, selecionada" e navega com as setas, que é o
-        comportamento que ela já conhece de qualquer formulário.
-      */}
-      <div role="radiogroup" aria-labelledby="modo-titulo" className="grid gap-2 sm:grid-cols-2">
+      <div role="radiogroup" aria-labelledby="modo-titulo" className="flex flex-col gap-2">
         {MODOS.map((modo) => {
           const escolhido = value === modo.value
           return (
@@ -71,23 +65,19 @@ export function ModePicker({ value, disabled = false, onChange }: ModePickerProp
               onClick={() => {
                 onChange(modo.value)
               }}
-              className={`flex min-h-24 flex-col items-start gap-1 border-2 p-4 text-left disabled:opacity-40 ${
+              className={`flex flex-col items-start gap-1 border-2 p-3 text-left transition-colors disabled:opacity-40 ${
                 escolhido
-                  ? 'border-accent bg-accent text-paper'
-                  : 'border-ink-line hover:border-paper'
+                  ? 'border-accent bg-accent/10 border-l-4 border-l-accent text-paper'
+                  : 'border-ink-line bg-ink-soft/20 hover:border-paper'
               }`}
             >
               <span className="flex w-full items-center justify-between gap-2">
-                <span className="font-display text-lg uppercase tracking-wide">{modo.nome}</span>
-                {/*
-                  A marca de escolhido é texto, não só cor de fundo: quem não
-                  distingue as cores precisa saber onde está.
-                */}
-                <span className="font-body text-[0.625rem] font-bold uppercase tracking-[0.16em]">
-                  {escolhido ? 'Escolhido' : ''}
+                <span className="font-display text-base uppercase tracking-wide">{modo.nome}</span>
+                <span className="font-body text-[0.625rem] font-bold uppercase tracking-[0.16em] text-accent">
+                  {escolhido ? '✓ Escolhido' : ''}
                 </span>
               </span>
-              <span className="font-body text-sm">{modo.resumo}</span>
+              <span className="font-body text-xs font-semibold">{modo.resumo}</span>
               <span className={`font-body text-xs ${escolhido ? 'text-paper/80' : 'text-muted'}`}>
                 {modo.detalhe}
               </span>

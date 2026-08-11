@@ -1395,12 +1395,8 @@ function LocalDubStage({
         </div>
       ) : null}
 
-      <div
-        className={
-          showSceneReview ? 'grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]' : ''
-        }
-      >
-        <div className="min-w-0">
+      <div className="mt-2 grid items-stretch gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="flex flex-col gap-3 min-w-0 justify-start">
           <VideoPlayer
             ref={attachVideo}
             src={selected.url}
@@ -1414,7 +1410,7 @@ function LocalDubStage({
 
           {reference ? (
             <p
-              className="mt-3 border-l-4 border-warn bg-warn/10 px-3 py-2 text-xs leading-relaxed text-paper/80"
+              className="mt-1 border-l-4 border-warn bg-warn/10 px-3 py-2 text-xs leading-relaxed text-paper/80"
               data-testid="reference-audio-notice"
               role="note"
             >
@@ -1427,23 +1423,82 @@ function LocalDubStage({
           ) : null}
         </div>
 
-        {showSceneReview ? (
-          <SceneReviewPanel
-            segments={reviewedSegments}
-            texts={texts}
-            characterNames={characterNames}
-            voiceCount={voiceCount}
-            sources={sources}
-            transcription={transcription}
-            activeIndex={activeSegmentIndex}
-            disabled={workflowLocked || exportingVideo}
-            onTextChange={updateText}
-            onCycleVoice={cycleVoice}
-            onToggleSource={toggleSource}
-            onSelect={goToSegment}
-            onRecognizeAgain={openCastDialog}
-          />
-        ) : null}
+        <div className="flex flex-col min-w-0 h-full">
+          {showSceneReview ? (
+            <SceneReviewPanel
+              segments={reviewedSegments}
+              texts={texts}
+              characterNames={characterNames}
+              voiceCount={voiceCount}
+              sources={sources}
+              transcription={transcription}
+              activeIndex={activeSegmentIndex}
+              disabled={workflowLocked || exportingVideo}
+              onTextChange={updateText}
+              onCycleVoice={cycleVoice}
+              onToggleSource={toggleSource}
+              onSelect={goToSegment}
+              onRecognizeAgain={openCastDialog}
+              onBackToSettings={() => handleModeChange('full')}
+            />
+          ) : reference && (state.matches('idle') || state.matches('preview')) ? (
+            <details open className="flex flex-col justify-between h-full border-2 border-ink-line bg-ink" data-testid="ajustes-da-cena">
+              <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-2 border-b-2 border-ink-line bg-ink-soft/40 px-4 py-3 font-display text-sm uppercase tracking-widest hover:bg-ink-soft">
+                <span>
+                  {multiplayer ? 'Configuração da partida' : 'Ajustes da cena'} ·{' '}
+                  {MODE_LABELS[takeMode]}
+                </span>
+                <span className="font-body text-xs text-muted">
+                  {subtitles.length}/{orderedSegments.length} falas escritas
+                </span>
+              </summary>
+              <div className="flex flex-col justify-between flex-1 gap-6 p-4">
+                <div className="flex flex-col gap-4">
+                  {!multiplayer ? <ModePicker value={takeMode} onChange={handleModeChange} /> : null}
+
+                  {!multiplayer && takeMode === 'full' ? (
+                    <div className="flex flex-col gap-2 border-t border-ink-line pt-3">
+                      <p className="text-xs text-muted leading-relaxed">
+                        No modo Cena Inteira, você grava todo o vídeo do começo ao fim. Para revisar e dublar fala por fala, selecione <strong>"Fala a fala"</strong> acima.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {multiplayer && match.state ? (
+                    <p className="text-xs text-muted">
+                      A configuração foi travada quando o código foi gerado. Assim os dois aparelhos
+                      usam exatamente as mesmas falas e personagens.
+                    </p>
+                  ) : null}
+
+                  {!match.state && multiplayer ? (
+                    <p className="text-xs text-muted">
+                      Diga quem participa da cena e o reconhecimento começa sozinho. Depois confira as
+                      falas ao lado do vídeo antes de criar o código da partida.
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="border-t-2 border-ink-line pt-4 mt-auto">
+                  <Button
+                    className="w-full"
+                    size="md"
+                    variant="secondary"
+                    disabled={transcription.phase === 'running'}
+                    data-testid="local-transcrever"
+                    onClick={openCastDialog}
+                  >
+                    {transcription.phase === 'running'
+                      ? 'Reconhecendo…'
+                      : transcription.phase === 'done'
+                        ? 'Reconhecer de novo'
+                        : 'Reconhecer falas da cena'}
+                  </Button>
+                </div>
+              </div>
+            </details>
+          ) : null}
+        </div>
       </div>
 
       {takeMode === 'segment' && transcriptSegments && activeSegment ? (
@@ -1568,49 +1623,6 @@ function LocalDubStage({
           state.matches('recording')) && (
           <LevelMeter peak={recorder.level} recording={state.matches('recording')} />
         )}
-
-        {reference && (state.matches('idle') || state.matches('preview')) ? (
-          <details className="border-2 border-ink-line" data-testid="ajustes-da-cena">
-            <summary className="min-h-12 cursor-pointer px-4 py-3 font-display text-sm uppercase tracking-widest">
-              {multiplayer ? 'Configuração da partida' : 'Ajustes da cena'} ·{' '}
-              {MODE_LABELS[takeMode]} · {subtitles.length}/{orderedSegments.length} falas escritas
-            </summary>
-            <div className="flex flex-col gap-4 border-t-2 border-ink-line p-4">
-              {!multiplayer ? <ModePicker value={takeMode} onChange={handleModeChange} /> : null}
-
-              {multiplayer && match.state ? (
-                <p className="text-xs text-muted">
-                  A configuração foi travada quando o código foi gerado. Assim os dois aparelhos
-                  usam exatamente as mesmas falas e personagens.
-                </p>
-              ) : null}
-
-              {!match.state && multiplayer ? (
-                <p className="text-xs text-muted">
-                  Diga quem participa da cena e o reconhecimento começa sozinho. Depois confira as
-                  falas ao lado do vídeo antes de criar o código da partida.
-                </p>
-              ) : null}
-
-              {!match.state && multiplayer ? (
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    variant="secondary"
-                    disabled={transcription.phase === 'running'}
-                    data-testid="local-transcrever"
-                    onClick={openCastDialog}
-                  >
-                    {transcription.phase === 'running'
-                      ? 'Reconhecendo…'
-                      : transcription.phase === 'done'
-                        ? 'Reconhecer de novo'
-                        : 'Definir personagens e reconhecer'}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </details>
-        ) : null}
 
         {multiplayer ? (
           <OnlineMatchPanel
