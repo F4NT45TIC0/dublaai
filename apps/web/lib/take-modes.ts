@@ -16,7 +16,7 @@ export interface SegmentTakeState {
  */
 
 /** Como a cena é gravada. */
-export type TakeMode = 'full' | 'segment' | 'duet' | 'online'
+export type TakeMode = 'full' | 'segment' | 'online'
 
 /**
  * Folga antes e depois da fala.

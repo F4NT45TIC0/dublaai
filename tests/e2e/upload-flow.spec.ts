@@ -25,15 +25,7 @@ async function waitForLocalState(page: Page, state: string, timeout = 60_000): P
 function probeMedia(path: string): ProbeResult {
   const output = execFileSync(
     'ffprobe',
-    [
-      '-v',
-      'error',
-      '-show_entries',
-      'stream=codec_type,codec_name',
-      '-of',
-      'json',
-      path,
-    ],
+    ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name', '-of', 'json', path],
     { encoding: 'utf8', timeout: 30_000 },
   )
   return JSON.parse(output) as ProbeResult
@@ -41,7 +33,9 @@ function probeMedia(path: string): ProbeResult {
 
 /** A forma de onda é diagnóstico e mora numa gaveta própria. */
 async function abrirOnda(page: Page): Promise<void> {
-  const gaveta = page.locator('details', { has: page.locator('summary', { hasText: /Forma de onda/i }) })
+  const gaveta = page.locator('details', {
+    has: page.locator('summary', { hasText: /Forma de onda/i }),
+  })
   if (await gaveta.evaluate((el: HTMLDetailsElement) => el.open)) return
   await gaveta.locator('summary').click()
 }
@@ -103,7 +97,7 @@ test.describe('arquivo ou URL de vídeo', () => {
     await page.getByTestId('local-stop-dub').click()
 
     await waitForLocalState(page, 'preview')
-    await expect(page.getByRole('button', { name: /Ouvir com o vídeo/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Ouvir vídeo', exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: /Resultado da dublagem/i })).toBeVisible({
       timeout: 30_000,
     })
@@ -116,9 +110,7 @@ test.describe('arquivo ou URL de vídeo', () => {
     const download = await downloadPromise
     const downloadPath = await download.path()
 
-    expect(download.suggestedFilename()).toMatch(
-      /^video-with-reference-audio-dublado\.(webm|mp4)$/,
-    )
+    expect(download.suggestedFilename()).toMatch(/^video-with-reference-audio-dublado\.(webm|mp4)$/)
     expect(downloadPath, 'o navegador não materializou o download').not.toBeNull()
     if (!downloadPath) throw new Error('Download sem caminho local')
     expect(statSync(downloadPath).size).toBeGreaterThan(1_000)
@@ -167,12 +159,16 @@ test.describe('arquivo ou URL de vídeo', () => {
   test('falas digitadas viram legenda e o modo fala-a-fala grava um trecho', async ({ page }) => {
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
-    await expect(
-      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
-    ).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('heading', { name: 'video-with-reference-audio.mp4' })).toBeVisible(
+      { timeout: 60_000 },
+    )
 
     // A pessoa digita a fala do primeiro trecho — nada é transcrito sozinho.
     await abrirAjustes(page)
+    const modos = page.getByRole('radiogroup', { name: /Como você quer dublar/i })
+    await expect(modos.getByRole('radio')).toHaveCount(2)
+    await expect(modos.getByRole('radio', { name: /Em dupla/i })).toHaveCount(0)
+    await expect(page.getByTestId('local-take-mode-duet')).toHaveCount(0)
     await page.getByTestId('local-fala-0').fill('Olá, mundo da dublagem!')
     await expect(page.getByTestId('ajustes-da-cena')).toContainText('1/8 falas escritas')
 
@@ -192,9 +188,9 @@ test.describe('arquivo ou URL de vídeo', () => {
   test('o botão de próxima fala avança sem obrigar a rolar a página', async ({ page }) => {
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
-    await expect(
-      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
-    ).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('heading', { name: 'video-with-reference-audio.mp4' })).toBeVisible(
+      { timeout: 60_000 },
+    )
 
     await abrirAjustes(page)
     await page.getByTestId('local-take-mode-segment').click()
@@ -212,9 +208,9 @@ test.describe('arquivo ou URL de vídeo', () => {
   test('a barra fixa mostra a fala, avança e grava pelo teclado', async ({ page }) => {
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
-    await expect(
-      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
-    ).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('heading', { name: 'video-with-reference-audio.mp4' })).toBeVisible(
+      { timeout: 60_000 },
+    )
 
     await abrirAjustes(page)
     await page.getByTestId('local-take-mode-segment').click()
@@ -229,8 +225,12 @@ test.describe('arquivo ou URL de vídeo', () => {
     // vídeo junto para o quadro em que a próxima fala acontece.
     await page.getByTestId('segment-hud-original').click()
     await expect(page.getByTestId('segment-hud')).toContainText('Fala 2/8')
-    expect(await page.locator('video').first().evaluate((el: HTMLVideoElement) => el.currentTime))
-      .toBeGreaterThan(0)
+    expect(
+      await page
+        .locator('video')
+        .first()
+        .evaluate((el: HTMLVideoElement) => el.currentTime),
+    ).toBeGreaterThan(0)
 
     // Espaço grava sem tirar a mão do teclado.
     await page.locator('body').press('Space')
@@ -249,9 +249,9 @@ test.describe('arquivo ou URL de vídeo', () => {
   }) => {
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
-    await expect(
-      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
-    ).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('heading', { name: 'video-with-reference-audio.mp4' })).toBeVisible(
+      { timeout: 60_000 },
+    )
 
     await abrirAjustes(page)
     await page.getByTestId('local-take-mode-segment').click()
@@ -288,9 +288,9 @@ test.describe('arquivo ou URL de vídeo', () => {
 
     await page.goto('/enviar')
     await page.getByTestId('local-video-input').setInputFiles(VALID_VIDEO)
-    await expect(
-      page.getByRole('heading', { name: 'video-with-reference-audio.mp4' }),
-    ).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('heading', { name: 'video-with-reference-audio.mp4' })).toBeVisible(
+      { timeout: 60_000 },
+    )
 
     await page.getByTestId('local-start-dub').click()
     await waitForLocalState(page, 'recording', 40_000)

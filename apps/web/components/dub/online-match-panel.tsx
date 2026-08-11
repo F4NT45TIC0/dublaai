@@ -2,121 +2,145 @@
 
 import { useState } from 'react'
 import type { Character } from '@dubla/shared'
-import { Button, Tag } from '@dubla/ui'
+import { Button } from '@dubla/ui'
 import { formatMatchCode } from '@/lib/match-code'
-import { availableCharacters, progressByPlayer } from '@/lib/online-match'
-import type { OnlineMatch } from '@/lib/use-online-match'
+import {
+  availableCharacters,
+  isMatchReady,
+  isPlayerPresent,
+  progressByPlayer,
+} from '@/lib/online-match'
+import type { OnlineMatch, OnlineMatchScene } from '@/lib/use-online-match'
 
 export interface OnlineMatchPanelProps {
   readonly match: OnlineMatch
+  readonly scene: OnlineMatchScene
   readonly characters: readonly Character[]
-  readonly videoName: string
-  /** Entrega o vídeo aberto aqui, para subir junto com a partida. */
-  readonly loadVideoBlob?: () => Promise<Blob | null>
-  /** Abre neste aparelho o vídeo que veio da partida. */
-  readonly onAdoptVideo?: (file: File) => void
+  readonly videoId: string
+  /** Entrega o vídeo já preparado neste aparelho. */
+  readonly loadVideoBlob: () => Promise<Blob>
+  readonly onLeave: () => void
 }
 
 function characterName(characters: readonly Character[], id: string): string {
   return characters.find((character) => character.id === id)?.name ?? id
 }
 
-/**
- * Criar ou entrar numa partida online.
- *
- * O aviso de que o áudio sai do aparelho fica ANTES do botão, não no rodapé:
- * em todo o resto do Dubla Aí nada é enviado, e essa é a única exceção. Quem
- * escolhe jogar online precisa saber disso antes de gravar, não depois.
- */
+/** Sala, escolha de voz e turno da experiência Multiplayer. */
 export function OnlineMatchPanel({
   match,
+  scene,
   characters,
-  videoName,
+  videoId,
   loadVideoBlob,
-  onAdoptVideo,
+  onLeave,
 }: OnlineMatchPanelProps) {
-  const [codeInput, setCodeInput] = useState('')
   const [name, setName] = useState('')
   const [characterId, setCharacterId] = useState('')
+  const [copied, setCopied] = useState(false)
 
   const state = match.state
-  const livres = state ? availableCharacters(state) : []
-  const meuPersonagem = state?.players.find((player) => player.id === match.playerId)
 
   if (!state) {
+    const duasVozes = characters.length === 2
     return (
       <section
-        className="flex flex-col gap-4 border-2 border-ink-line p-4"
+        className="flex flex-col gap-4 border-2 border-accent p-4"
         data-testid="online-setup"
-        aria-label="Partida online"
+        aria-label="Criar partida multiplayer"
       >
         <div>
-          <h3 className="font-display text-lg uppercase">Jogar com um amigo à distância</h3>
-          <p className="mt-1 text-sm text-muted">
-            Só você precisa ter o vídeo: ele vai junto com a partida e a outra pessoa recebe ao
-            entrar com o código. Se você abriu a cena por link, é o link que viaja — mais rápido, e
-            sem teto de tamanho. As falas gravadas também viajam, para que cada um ouça a do outro
-            antes de responder. Tudo some depois de 24 horas.
+          <p className="font-display text-sm uppercase tracking-[0.2em] text-accent">
+            Vídeo pronto
+          </p>
+          <h3 className="mt-1 font-display text-2xl uppercase">Gerar o código da partida</h3>
+          <p className="mt-2 text-sm text-muted">
+            Este será o único vídeo da sala. Seu amigo entra apenas com o código e recebe a mesma
+            cena automaticamente.
           </p>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <Button
-            data-testid="online-criar"
-            disabled={match.busy}
-            onClick={() => {
-              const criar = async () => {
-                const video = loadVideoBlob ? await loadVideoBlob() : null
-                await match.create(video ?? undefined)
-              }
-              void criar()
-            }}
-          >
-            {match.busy ? 'Criando…' : 'Criar partida'}
-          </Button>
-          <p className="text-xs text-muted">
-            Você recebe um código para mandar para quem vai jogar com você. Vídeos de até 200 MB
-            vão junto; acima disso, a outra pessoa precisa abrir o mesmo arquivo.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2 border-t-2 border-ink-line pt-4">
-          <label className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
-            Recebeu um código?
-          </label>
-          <input
-            type="text"
-            value={codeInput}
-            maxLength={20}
-            placeholder="K7M2-9XQP-4TVB"
-            data-testid="online-codigo"
-            onChange={(event) => {
-              setCodeInput(event.target.value)
-            }}
-            className="min-h-12 border-2 border-ink-line bg-ink-soft px-3 font-display text-lg uppercase tracking-[0.2em] text-paper placeholder:text-muted"
-          />
-          <Button
-            variant="secondary"
-            disabled={match.busy || codeInput.trim() === ''}
-            data-testid="online-entrar-codigo"
-            onClick={() => {
-              // Só carrega a partida: a escolha do personagem acontece na tela
-              // seguinte, já sabendo o que sobrou.
-              void match.peek(codeInput)
-            }}
-          >
-            Entrar na partida
-          </Button>
-        </div>
-
-        {match.error ? (
-          <p className="border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
-            {match.error}
+        {!duasVozes ? (
+          <p className="border-2 border-warn px-3 py-2 text-sm text-warn" role="status">
+            Para duas pessoas jogarem sem a partida travar, a cena precisa ter exatamente duas
+            vozes. Em Ajustes da cena, reconheça as falas e escolha 2 personagens.
           </p>
         ) : null}
+
+        <Button
+          size="hero"
+          data-testid="online-criar"
+          disabled={match.busy || !duasVozes || match.playerId === ''}
+          onClick={() => {
+            const criar = async () => {
+              const video = await loadVideoBlob()
+              await match.create(scene, video)
+            }
+            void criar()
+          }}
+        >
+          {match.uploadProgress !== null
+            ? `Enviando vídeo… ${String(Math.round(match.uploadProgress))}%`
+            : match.busy
+              ? 'Criando sala…'
+              : 'Gerar código da partida'}
+        </Button>
+
+        {match.error ? <MatchError message={match.error} /> : null}
       </section>
     )
   }
+
+  const videoReady = state.videoShared === true || state.videoUrl !== undefined
+  if (!videoReady) {
+    const souAnfitriao = state.hostId === match.playerId
+    const mesmoVideo = state.videoId === videoId
+    return (
+      <section
+        className="flex flex-col gap-4 border-2 border-warn p-4"
+        data-testid="online-video-pendente"
+      >
+        <h3 className="font-display text-xl uppercase">Partida {formatMatchCode(state.code)}</h3>
+        <p className="text-sm text-muted" role="status">
+          {souAnfitriao
+            ? 'A sala está criada, mas o vídeo ainda não terminou de chegar. Ninguém consegue iniciar enquanto ele não estiver pronto.'
+            : 'O anfitrião ainda está preparando o vídeo da sala.'}
+        </p>
+        {souAnfitriao ? (
+          <>
+            {!mesmoVideo ? (
+              <p className="border-2 border-warn px-3 py-2 text-sm text-warn" role="alert">
+                Este não é o arquivo usado para criar a sala. Reabra o vídeo correto ou saia e crie
+                outra partida.
+              </p>
+            ) : null}
+            <Button
+              disabled={match.busy || !mesmoVideo}
+              onClick={() => {
+                const retry = async () => {
+                  await match.shareVideo(await loadVideoBlob(), scene.videoName)
+                }
+                void retry()
+              }}
+            >
+              {match.uploadProgress !== null
+                ? `Enviando vídeo… ${String(Math.round(match.uploadProgress))}%`
+                : match.busy
+                  ? 'Enviando…'
+                  : 'Tentar enviar o vídeo novamente'}
+            </Button>
+          </>
+        ) : null}
+        {match.error ? <MatchError message={match.error} /> : null}
+        <Button variant="secondary" disabled={match.busy} onClick={onLeave}>
+          Sair da partida
+        </Button>
+      </section>
+    )
+  }
+
+  const livres = availableCharacters(state)
+  const meuPersonagem = state.players.find((player) => player.id === match.playerId)
 
   if (!meuPersonagem) {
     return (
@@ -125,34 +149,15 @@ export function OnlineMatchPanel({
         data-testid="online-escolher-personagem"
         aria-label="Escolher personagem"
       >
+        <RoomCode code={state.code} copied={copied} onCopied={setCopied} />
+
         <div>
-          <h3 className="font-display text-lg uppercase">Escolha sua voz</h3>
+          <h3 className="font-display text-xl uppercase">Escolha sua voz</h3>
           <p className="mt-1 text-sm text-muted">
-            Partida <strong>{formatMatchCode(state.code)}</strong> · {state.videoName}
+            Quando você confirmar, este aparelho fica pronto. A primeira fala só é liberada depois
+            que as duas pessoas estiverem dentro da sala.
           </p>
         </div>
-
-        {(state.videoShared || state.videoUrl !== undefined) && onAdoptVideo ? (
-          <div className="flex flex-col gap-2 border-2 border-ink-line p-3">
-            <p className="text-sm">
-              Esta partida traz o vídeo. Baixe para dublar exatamente a mesma cena.
-            </p>
-            <Button
-              variant="secondary"
-              disabled={match.busy}
-              data-testid="online-baixar-video"
-              onClick={() => {
-                const baixar = async () => {
-                  const file = await match.pullVideo()
-                  if (file) onAdoptVideo(file)
-                }
-                void baixar()
-              }}
-            >
-              {match.busy ? 'Baixando…' : 'Baixar o vídeo da partida'}
-            </Button>
-          </div>
-        ) : null}
 
         <label className="flex flex-col gap-1">
           <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
@@ -171,7 +176,7 @@ export function OnlineMatchPanel({
           />
         </label>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           {livres.map((id) => (
             <button
               key={id}
@@ -181,7 +186,7 @@ export function OnlineMatchPanel({
               onClick={() => {
                 setCharacterId(id)
               }}
-              className={`min-h-11 border-2 px-4 font-display text-sm uppercase tracking-widest ${
+              className={`min-h-14 border-2 px-4 font-display text-sm uppercase tracking-widest ${
                 characterId === id
                   ? 'border-accent bg-accent text-paper'
                   : 'border-ink-line text-muted hover:border-paper hover:text-paper'
@@ -193,87 +198,169 @@ export function OnlineMatchPanel({
         </div>
 
         {livres.length === 0 ? (
-          <p className="text-sm text-muted">
-            Todos os personagens já têm dono. Peça para alguém sair ou crie outra partida.
-          </p>
+          <p className="text-sm text-muted">As duas vagas desta partida já estão ocupadas.</p>
         ) : null}
 
         <Button
           disabled={match.busy || characterId === ''}
           data-testid="online-confirmar-personagem"
           onClick={() => {
-            void match.join(state.code, name.trim() === '' ? 'Jogador' : name.trim(), characterId)
+            void match.join(
+              state.code,
+              name.trim() === '' ? 'Jogador' : name.trim(),
+              characterId,
+              videoId,
+            )
           }}
         >
-          {match.busy ? 'Entrando…' : 'Entrar na cena'}
+          {match.busy ? 'Confirmando…' : 'Estou pronto'}
         </Button>
 
-        {match.error ? (
-          <p className="border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
-            {match.error}
-          </p>
-        ) : null}
+        {match.error ? <MatchError message={match.error} /> : null}
+
+        <Button variant="secondary" disabled={match.busy} onClick={onLeave}>
+          Voltar
+        </Button>
       </section>
     )
   }
 
   const placar = progressByPlayer(state)
+  const ready = isMatchReady(state)
 
   return (
     <section
-      className="flex flex-col gap-3 border-2 border-ink-line p-4"
+      className="flex flex-col gap-4 border-2 border-ink-line p-4"
       data-testid="online-turno"
-      aria-label="Partida online em andamento"
+      aria-label="Partida multiplayer"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-display text-lg uppercase">
-          Partida {formatMatchCode(state.code)}
-        </h3>
-        <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
-          {videoName}
-        </span>
-      </div>
+      <RoomCode code={state.code} copied={copied} onCopied={setCopied} />
 
-      <ul className="flex flex-wrap gap-2">
+      <ul className="grid gap-2 sm:grid-cols-2" aria-label="Jogadores da sala">
         {state.players.map((player) => (
-          <li key={player.id}>
-            <Tag>
-              {player.name} · {characterName(characters, player.characterId)} ·{' '}
-              {placar[player.id] ?? 0}
-            </Tag>
+          <li key={player.id} className="flex flex-col gap-1 border-2 border-ink-line p-3">
+            <span className="font-display uppercase">
+              {player.id === match.playerId ? 'Você' : player.name}
+            </span>
+            <span className="text-xs text-muted">
+              {characterName(characters, player.characterId)} · {placar[player.id] ?? 0} falas ·{' '}
+              {!isPlayerPresent(player, state.updatedAt)
+                ? 'Desconectado'
+                : player.ready
+                  ? 'Pronto'
+                  : 'Preparando vídeo'}
+            </span>
+            {player.id !== match.playerId && !isPlayerPresent(player, state.updatedAt) ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={match.busy}
+                data-testid="online-liberar-vaga"
+                onClick={() => {
+                  void match.reclaim(player.id)
+                }}
+              >
+                Liberar vaga desconectada
+              </Button>
+            ) : null}
           </li>
         ))}
+        {state.players.length < 2 ? (
+          <li className="flex min-h-16 items-center border-2 border-dashed border-ink-line p-3 text-sm text-muted">
+            Aguardando amigo
+          </li>
+        ) : null}
       </ul>
 
       {state.players.length < 2 ? (
         <p className="text-sm text-muted" role="status" data-testid="online-aguardando-dupla">
-          Mande o código <strong>{formatMatchCode(state.code)}</strong> para a outra pessoa. A cena
-          começa quando ela entrar.
+          Envie o código para a outra pessoa. A gravação fica bloqueada até ela entrar e ficar
+          pronta.
+        </p>
+      ) : !ready ? (
+        <p className="text-sm text-muted" role="status" data-testid="online-aguardando-prontos">
+          As duas vagas estão ocupadas. Esperando o outro aparelho preparar o vídeo ou voltar à
+          partida.
         </p>
       ) : match.complete ? (
         <p className="text-sm" role="status" data-testid="online-completa">
-          Cena fechada. Monte a cena completa aqui embaixo para ouvir as duas vozes juntas.
+          Cena fechada. Ouça as duas vozes juntas aqui embaixo.
         </p>
       ) : match.myTurn ? (
         <p className="text-sm" role="status" data-testid="online-minha-vez">
-          É a sua vez. Grave a fala destacada — a outra pessoa vai ouvir assim que você terminar.
+          É a sua vez. Grave a fala destacada — a outra pessoa recebe assim que você enviar.
         </p>
       ) : (
         <p className="text-sm text-muted" role="status" data-testid="online-vez-do-outro">
-          Esperando {match.waitingFor ?? 'a outra pessoa'} gravar. A tela avisa quando voltar para
-          você.
+          Esperando {match.waitingFor ?? 'a outra pessoa'} gravar. A tela muda sozinha quando chegar
+          sua vez.
         </p>
       )}
 
-      {match.error ? (
-        <p className="border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
-          {match.error}
-        </p>
+      {!meuPersonagem.ready ? (
+        <Button
+          disabled={match.busy}
+          onClick={() => {
+            void match.ready()
+          }}
+        >
+          Confirmar que estou pronto
+        </Button>
       ) : null}
 
-      <Button variant="secondary" onClick={match.leave} data-testid="online-sair">
+      {match.error ? <MatchError message={match.error} /> : null}
+
+      <Button variant="secondary" onClick={onLeave} data-testid="online-sair">
         Sair da partida
       </Button>
     </section>
+  )
+}
+
+function RoomCode({
+  code,
+  copied,
+  onCopied,
+}: {
+  code: string
+  copied: boolean
+  onCopied: (copied: boolean) => void
+}) {
+  const formatted = formatMatchCode(code)
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-2 border-accent p-3">
+      <p>
+        <span className="block font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+          Código da partida
+        </span>
+        <strong
+          className="font-display text-xl tracking-[0.12em] text-accent"
+          data-testid="online-codigo-da-sala"
+        >
+          {formatted}
+        </strong>
+      </p>
+      <Button
+        variant="secondary"
+        onClick={() => {
+          void navigator.clipboard.writeText(formatted).then(() => {
+            onCopied(true)
+            window.setTimeout(() => {
+              onCopied(false)
+            }, 2_000)
+          })
+        }}
+      >
+        {copied ? 'Código copiado' : 'Copiar código'}
+      </Button>
+    </div>
+  )
+}
+
+function MatchError({ message }: { message: string }) {
+  return (
+    <p className="border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
+      {message}
+    </p>
   )
 }

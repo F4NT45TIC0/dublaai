@@ -11,7 +11,6 @@ import {
 import { Button, ErrorState, ScoreCard, Tag } from '@dubla/ui'
 import { AttemptPlayback } from '@/components/dub/attempt-playback'
 import { Countdown } from '@/components/dub/countdown'
-import { DuetSetup, DuetSummary, DuetTurn } from '@/components/dub/duet-panel'
 import { LevelMeter } from '@/components/dub/level-meter'
 import { SegmentHud, type SegmentPhase } from '@/components/dub/segment-hud'
 import { ModePicker } from '@/components/dub/mode-picker'
@@ -20,15 +19,6 @@ import { StitchedPlayback } from '@/components/dub/stitched-playback'
 import { SubtitleRenderer } from '@/components/scene/subtitle-renderer'
 import { VideoPlayer, type VideoPlayerHandle } from '@/components/scene/video-player'
 import { Waveform } from '@/components/scene/waveform'
-import {
-  isComplete,
-  MIN_DUET_CHARACTERS,
-  nextPendingIndex,
-  playableSegments,
-  recordTake,
-  segmentOwner,
-  type DuetSession,
-} from '@/lib/duet-session'
 import {
   analysisWindowFor,
   bestScoreBySegment,
@@ -49,7 +39,7 @@ import { transcribeReference } from '@/lib/transcribe-reference'
 import { assignVoice, segmentsFromTranscript } from '@/lib/segments-from-transcript'
 import { isOriginal, type SegmentSource } from '@/lib/segment-sources'
 import { OnlineMatchPanel } from '@/components/dub/online-match-panel'
-import { useOnlineMatch } from '@/lib/use-online-match'
+import { useOnlineMatch, type OnlineMatch } from '@/lib/use-online-match'
 import type { VideoReference } from '@/lib/prepare-video-reference'
 import { downloadRemoteVideo, validateRemoteVideoUrl } from '@/lib/remote-video'
 import { DubbedVideoExport } from './dubbed-video-export'
@@ -76,11 +66,21 @@ interface SelectionRequest {
   readonly controller: AbortController
 }
 
-export function LocalVideoDubber() {
+export interface LocalVideoDubberProps {
+  readonly experience?: 'solo' | 'multiplayer'
+}
+
+export function LocalVideoDubber({ experience = 'solo' }: LocalVideoDubberProps) {
+  const multiplayer = experience === 'multiplayer'
+  const match = useOnlineMatch(multiplayer)
   const selectionRequestRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
+  const matchDownloadRef = useRef('')
+  const autoReadyRef = useRef('')
   const [selected, setSelected] = useState<SelectedVideo | null>(null)
   const [remoteUrl, setRemoteUrl] = useState('')
+  const [matchCode, setMatchCode] = useState('')
+  const [multiplayerAction, setMultiplayerAction] = useState<'choose' | 'create'>('choose')
   /** O seletor volta à tela só quando a pessoa pede para trocar de vídeo. */
   const [trocandoVideo, setTrocandoVideo] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -103,7 +103,7 @@ export function LocalVideoDubber() {
     }
   }, [selected])
 
-  const beginSelection = (initialStatus: string): SelectionRequest => {
+  const beginSelection = useCallback((initialStatus: string): SelectionRequest => {
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -112,66 +112,69 @@ export function LocalVideoDubber() {
     setError(null)
     setStatus(initialStatus)
     return { id, controller }
-  }
+  }, [])
 
-  const adoptVideo = async (
-    file: File,
-    sourceKind: SelectedVideo['sourceKind'],
-    request: SelectionRequest,
-    sourceUrl?: string,
-  ) => {
-    const fileError = validateLocalVideoFile(file)
-    if (fileError) throw new Error(fileError)
+  const adoptVideo = useCallback(
+    async (
+      file: File,
+      sourceKind: SelectedVideo['sourceKind'],
+      request: SelectionRequest,
+      sourceUrl?: string,
+    ) => {
+      const fileError = validateLocalVideoFile(file)
+      if (fileError) throw new Error(fileError)
 
-    const url = URL.createObjectURL(file)
-    let adopted = false
-    try {
-      setStatus('Lendo os metadados do vídeo…')
-      const metadata = await readVideoMetadata(url, request.controller.signal)
-      if (selectionRequestRef.current !== request.id) return
+      const url = URL.createObjectURL(file)
+      let adopted = false
+      try {
+        setStatus('Lendo os metadados do vídeo…')
+        const metadata = await readVideoMetadata(url, request.controller.signal)
+        if (selectionRequestRef.current !== request.id) return
 
-      const metadataError = validateLocalVideoMetadata(metadata)
-      if (metadataError) throw new Error(metadataError)
+        const metadataError = validateLocalVideoMetadata(metadata)
+        if (metadataError) throw new Error(metadataError)
 
-      const id = await createLocalVideoId(file, metadata.durationMs)
-      if (request.controller.signal.aborted || selectionRequestRef.current !== request.id) return
-      setStatus('Extraindo e analisando o áudio de referência…')
-      const reference = await prepareVideoReference(
-        file,
-        id,
-        metadata.durationMs,
-        request.controller.signal,
-      )
-      if (selectionRequestRef.current !== request.id) return
+        const id = await createLocalVideoId(file, metadata.durationMs)
+        if (request.controller.signal.aborted || selectionRequestRef.current !== request.id) return
+        setStatus('Extraindo e analisando o áudio de referência…')
+        const reference = await prepareVideoReference(
+          file,
+          id,
+          metadata.durationMs,
+          request.controller.signal,
+        )
+        if (selectionRequestRef.current !== request.id) return
 
-      setTrocandoVideo(false)
-      setSelected({
-        ...metadata,
-        id,
-        fileName: file.name,
-        fileSize: file.size,
-        url,
-        sourceKind,
-        ...(sourceUrl === undefined ? {} : { sourceUrl }),
-        reference,
-      })
-      adopted = true
-    } finally {
-      if (!adopted) URL.revokeObjectURL(url)
-    }
-  }
+        setTrocandoVideo(false)
+        setSelected({
+          ...metadata,
+          id,
+          fileName: file.name,
+          fileSize: file.size,
+          url,
+          sourceKind,
+          ...(sourceUrl === undefined ? {} : { sourceUrl }),
+          reference,
+        })
+        adopted = true
+      } finally {
+        if (!adopted) URL.revokeObjectURL(url)
+      }
+    },
+    [],
+  )
 
-  const finishSelection = (request: SelectionRequest) => {
+  const finishSelection = useCallback((request: SelectionRequest) => {
     if (selectionRequestRef.current !== request.id) return
     if (abortRef.current === request.controller) abortRef.current = null
     setStatus(null)
-  }
+  }, [])
 
-  const showSelectionError = (cause: unknown, request: SelectionRequest) => {
+  const showSelectionError = useCallback((cause: unknown, request: SelectionRequest) => {
     if (selectionRequestRef.current !== request.id) return
     if (cause instanceof DOMException && cause.name === 'AbortError') return
     setError(cause instanceof Error ? cause.message : 'Não conseguimos preparar esse vídeo.')
-  }
+  }, [])
 
   const cancelSelection = () => {
     const controller = abortRef.current
@@ -193,19 +196,21 @@ export function LocalVideoDubber() {
    * anfitrião e cai direto na cena, sem ter de achar o mesmo vídeo no próprio
    * computador.
    */
-  const adoptFromMatch = (file: File) => {
-    const request = beginSelection('Abrindo o vídeo da partida…')
-    const abrir = async () => {
+  const adoptFromMatch = useCallback(
+    async (file: File) => {
+      const request = beginSelection('Abrindo o vídeo da partida…')
       try {
         await adoptVideo(file, 'file', request)
+        return true
       } catch (cause) {
         showSelectionError(cause, request)
+        return false
       } finally {
         finishSelection(request)
       }
-    }
-    void abrir()
-  }
+    },
+    [adoptVideo, beginSelection, finishSelection, showSelectionError],
+  )
 
   const selectFile = async (file: File | undefined) => {
     if (!file) return
@@ -249,7 +254,62 @@ export function LocalVideoDubber() {
     }
   }
 
+  // Quem entra com código recebe o vídeo automaticamente. O hook da sala vive
+  // acima do stage, então adotar o arquivo não apaga código, vaga nem turno.
+  const matchState = match.state
+  const pullVideoFromMatch = match.pullVideo
+  useEffect(() => {
+    const room = matchState
+    if (!multiplayer || selected || !room) return
+    if (room.videoShared !== true && room.videoUrl === undefined) return
+    const downloadKey = `${room.code}:${String(room.videoShared)}:${room.videoUrl ?? ''}`
+    if (matchDownloadRef.current === downloadKey) return
+    matchDownloadRef.current = downloadKey
+
+    const download = async () => {
+      const file = await pullVideoFromMatch(room)
+      const adopted = file ? await adoptFromMatch(file) : false
+      // Falha transitória não pode condenar este código para sempre. Um novo
+      // heartbeat ou uma nova entrada tenta baixar novamente.
+      if (!adopted) matchDownloadRef.current = ''
+    }
+    void download()
+  }, [adoptFromMatch, matchState, multiplayer, pullVideoFromMatch, selected])
+
+  // No refresh, o servidor marca este aparelho como preparando antes de
+  // devolver a sala. Só o coloca pronto novamente depois que o vídeo local já
+  // foi baixado, validado e analisado por inteiro.
+  useEffect(() => {
+    const room = match.state
+    if (!multiplayer || !selected || !room || match.busy) return
+    const me = room.players.find((player) => player.id === match.playerId)
+    if (!me || me.ready) return
+    const key = `${room.code}:${selected.id}:${me.id}`
+    if (autoReadyRef.current === key) return
+    autoReadyRef.current = key
+    void match.ready()
+  }, [match, multiplayer, selected])
+
+  const leaveMatchScreen = useCallback(async () => {
+    if (!(await match.leave())) return
+    matchDownloadRef.current = ''
+    autoReadyRef.current = ''
+    setMatchCode('')
+    setMultiplayerAction('choose')
+    setSelected(null)
+  }, [match])
+
   const escolhendo = !selected || trocandoVideo
+  const multiplayerLanding =
+    multiplayer && !selected && !match.state && multiplayerAction === 'choose'
+  const multiplayerWaiting =
+    multiplayer && !selected && match.state !== null && multiplayerAction === 'choose'
+  const hostNeedsVideo =
+    multiplayerWaiting &&
+    match.state.hostId === match.playerId &&
+    match.state.videoShared !== true &&
+    match.state.videoUrl === undefined
+  const showVideoPicker = escolhendo && (!multiplayer || multiplayerAction === 'create')
 
   return (
     /*
@@ -263,118 +323,243 @@ export function LocalVideoDubber() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-2 border-ink-line px-4 py-3">
           <p className="min-w-0 flex-1">
             <span className="block font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
-              Dublando
+              {multiplayer ? 'Vídeo da partida' : 'Dublando'}
             </span>
-            <span className="block truncate font-display text-lg uppercase" title={selected.fileName}>
+            <span
+              className="block truncate font-display text-lg uppercase"
+              title={selected.fileName}
+            >
               {selected.fileName}
             </span>
           </p>
-          <Button
-            variant="secondary"
-            data-testid="trocar-video"
-            onClick={() => {
-              setTrocandoVideo(true)
-            }}
-          >
-            Trocar vídeo
-          </Button>
+          {!multiplayer || !match.state ? (
+            <Button
+              variant="secondary"
+              data-testid="trocar-video"
+              onClick={() => {
+                setTrocandoVideo(true)
+              }}
+            >
+              Trocar vídeo
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
-      {escolhendo ? (
+      {multiplayerLanding ? (
+        <>
+          <header>
+            <p className="font-display text-sm uppercase tracking-[0.2em] text-accent">
+              Dois aparelhos · um código
+            </p>
+            <h1 className="mt-2 max-w-5xl font-display text-giant uppercase">Multiplayer</h1>
+            <p className="mt-4 max-w-2xl text-base leading-relaxed opacity-80 sm:text-lg">
+              Uma pessoa cria a partida com o vídeo. A outra entra só com o código. A primeira fala
+              fica bloqueada até os dois estarem na sala e com a cena pronta.
+            </p>
+          </header>
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <section className="flex min-h-56 flex-col items-start justify-between gap-5 border-2 border-accent p-6">
+              <div>
+                <p className="font-display text-sm uppercase tracking-[0.18em] text-accent">
+                  Vou convidar
+                </p>
+                <h2 className="mt-2 font-display text-4xl uppercase">Criar partida</h2>
+                <p className="mt-3 max-w-lg text-sm opacity-75">
+                  Escolha o vídeo da sala, confira as duas vozes e gere o código para compartilhar.
+                </p>
+              </div>
+              <Button
+                size="hero"
+                data-testid="multiplayer-criar"
+                onClick={() => {
+                  setMultiplayerAction('create')
+                }}
+              >
+                Criar partida
+              </Button>
+            </section>
+
+            <form
+              className="flex min-h-56 flex-col justify-between gap-5 border-2 border-ink p-6"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void match.peek(matchCode)
+              }}
+            >
+              <div>
+                <p className="font-display text-sm uppercase tracking-[0.18em] opacity-60">
+                  Recebi um convite
+                </p>
+                <h2 className="mt-2 font-display text-4xl uppercase">Entrar com código</h2>
+                <label className="mt-4 flex flex-col gap-2">
+                  <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] opacity-70">
+                    Código da partida
+                  </span>
+                  <input
+                    type="text"
+                    value={matchCode}
+                    maxLength={20}
+                    placeholder="K7M2-9XQP-4TVB"
+                    data-testid="online-codigo"
+                    onChange={(event) => {
+                      setMatchCode(event.target.value)
+                      match.clearError()
+                    }}
+                    className="min-h-14 border-2 border-ink bg-paper px-3 font-display text-lg uppercase tracking-[0.18em] text-ink placeholder:text-muted"
+                  />
+                </label>
+              </div>
+              {match.error ? (
+                <p className="border-2 border-danger px-3 py-2 text-sm text-danger" role="alert">
+                  {match.error}
+                </p>
+              ) : null}
+              <Button
+                type="submit"
+                size="hero"
+                variant="secondary"
+                data-testid="online-entrar-codigo"
+                disabled={match.busy || matchCode.trim() === ''}
+              >
+                {match.busy ? 'Procurando sala…' : 'Entrar na partida'}
+              </Button>
+            </form>
+          </div>
+        </>
+      ) : null}
+
+      {multiplayerWaiting ? (
+        <section className="flex flex-col gap-4 border-2 border-accent p-6" aria-live="polite">
+          <p className="font-display text-sm uppercase tracking-[0.2em] text-accent">
+            Partida encontrada
+          </p>
+          <h1 className="font-display text-4xl uppercase">
+            {hostNeedsVideo ? 'Reabra o vídeo da sala' : 'Preparando o vídeo da sala…'}
+          </h1>
+          <p className="max-w-2xl text-sm opacity-75">
+            {hostNeedsVideo
+              ? 'A página foi recarregada antes do envio terminar. Escolha novamente o mesmo arquivo para concluir esta sala.'
+              : 'Você não precisa escolher arquivo nenhum. Assim que o vídeo do anfitrião estiver pronto, ele baixa aqui e a partida continua automaticamente.'}
+          </p>
+          {match.error ? (
+            <p className="border-2 border-danger px-4 py-3 text-danger" role="alert">
+              {match.error}
+            </p>
+          ) : null}
+          {hostNeedsVideo ? (
+            <Button
+              onClick={() => {
+                setMultiplayerAction('create')
+              }}
+            >
+              Escolher o vídeo novamente
+            </Button>
+          ) : null}
+          <Button
+            variant="secondary"
+            disabled={match.busy}
+            onClick={() => {
+              void leaveMatchScreen()
+            }}
+          >
+            Voltar
+          </Button>
+        </section>
+      ) : null}
+
+      {showVideoPicker ? (
         <header>
           <p className="font-display text-sm uppercase tracking-[0.2em] text-accent">
-            Arquivo ou URL direta
+            {multiplayer ? 'Passo 1 de 2 · vídeo da sala' : 'Arquivo ou URL direta'}
           </p>
           <h1 className="mt-2 max-w-5xl font-display text-giant uppercase">
-            Duble a sua própria cena
+            {multiplayer ? 'Crie a partida' : 'Duble a sua própria cena'}
           </h1>
           <p className="mt-4 max-w-2xl text-base leading-relaxed opacity-80 sm:text-lg">
-            Escolha um vídeo de até 5 minutos ou cole uma URL direta. A gente separa as falas,
-            mostra onde você entrou na hora e devolve o vídeo com a sua voz — tudo no navegador.
+            {multiplayer
+              ? 'Escolha um vídeo de até 5 minutos. Ele será a única cena da sala; quem receber o código não precisa ter arquivo nenhum.'
+              : 'Escolha um vídeo de até 5 minutos ou cole uma URL direta. A gente separa as falas, mostra onde você entrou na hora e devolve o vídeo com a sua voz — tudo no navegador.'}
           </p>
         </header>
       ) : null}
 
-      <div className={escolhendo ? 'grid gap-5 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch' : 'hidden'}>
-        <label
-          className="group flex min-h-52 cursor-pointer flex-col items-center justify-center gap-4 border-2 border-dashed border-ink p-6 text-center hover:bg-ink hover:text-paper"
-          data-testid="local-video-dropzone"
-        >
-          <input
-            type="file"
-            accept="video/*,.mp4,.webm,.mov,.m4v"
-            className="sr-only"
-            data-testid="local-video-input"
-            disabled={selectionDisabled}
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0]
-              event.currentTarget.value = ''
-              void selectFile(file)
-            }}
-          />
-          <span className="font-display text-4xl uppercase text-accent group-hover:text-accent">
-            {selected ? 'Trocar arquivo' : 'Escolher arquivo'}
-          </span>
-          <span className="max-w-xl text-sm opacity-75">
-            Selecione uma cena do computador. O arquivo não é enviado para servidor.
-          </span>
-          <span className="font-display text-xs uppercase tracking-[0.18em] opacity-60">
-            MP4 · WebM · MOV · até 5 min e 1 GB
-          </span>
-        </label>
-
-        <div className="flex items-center justify-center font-display text-xl uppercase opacity-50">
-          ou
-        </div>
-
-        <form
-          className="flex min-h-52 flex-col justify-center gap-4 border-2 border-ink p-6"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void selectUrl()
-          }}
-        >
-          <label className="flex flex-col gap-2">
-            <span className="font-display text-3xl uppercase">URL direta</span>
-            <input
-              type="url"
-              value={remoteUrl}
-              disabled={selectionDisabled}
-              data-testid="remote-video-url"
-              placeholder="https://exemplo.com/cena.mp4"
-              onChange={(event) => {
-                setRemoteUrl(event.target.value)
-              }}
-              className="min-h-12 border-2 border-ink bg-paper px-3 text-sm text-ink placeholder:text-muted"
-            />
-          </label>
-          <Button
-            type="submit"
-            size="lg"
-            disabled={selectionDisabled || remoteUrl.trim().length === 0}
+      {showVideoPicker ? (
+        <div className="grid gap-5 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
+          <label
+            className="group flex min-h-52 cursor-pointer flex-col items-center justify-center gap-4 border-2 border-dashed border-ink p-6 text-center hover:bg-ink hover:text-paper"
+            data-testid="local-video-dropzone"
           >
-            Processar URL
-          </Button>
-          <p className="text-xs opacity-70">
-            Precisa ser o link direto de um MP4, WebM ou MOV com CORS. Links de páginas do YouTube,
-            TikTok, Instagram ou Drive não funcionam neste modo.
-          </p>
-        </form>
-      </div>
+            <input
+              type="file"
+              accept="video/*,.mp4,.webm,.mov,.m4v"
+              className="sr-only"
+              data-testid="local-video-input"
+              disabled={selectionDisabled}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                event.currentTarget.value = ''
+                void selectFile(file)
+              }}
+            />
+            <span className="font-display text-4xl uppercase text-accent group-hover:text-accent">
+              {selected ? 'Trocar arquivo' : 'Escolher arquivo'}
+            </span>
+            <span className="max-w-xl text-sm opacity-75">
+              {multiplayer
+                ? 'O vídeo será compartilhado somente com quem entrar nesta partida.'
+                : 'Selecione uma cena do computador. O arquivo não é enviado para servidor.'}
+            </span>
+            <span className="font-display text-xs uppercase tracking-[0.18em] opacity-60">
+              MP4 · WebM · MOV · até 5 min e 1 GB
+            </span>
+          </label>
+
+          <div className="flex items-center justify-center font-display text-xl uppercase opacity-50">
+            ou
+          </div>
+
+          <form
+            className="flex min-h-52 flex-col justify-center gap-4 border-2 border-ink p-6"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void selectUrl()
+            }}
+          >
+            <label className="flex flex-col gap-2">
+              <span className="font-display text-3xl uppercase">URL direta</span>
+              <input
+                type="url"
+                value={remoteUrl}
+                disabled={selectionDisabled}
+                data-testid="remote-video-url"
+                placeholder="https://exemplo.com/cena.mp4"
+                onChange={(event) => {
+                  setRemoteUrl(event.target.value)
+                }}
+                className="min-h-12 border-2 border-ink bg-paper px-3 text-sm text-ink placeholder:text-muted"
+              />
+            </label>
+            <Button
+              type="submit"
+              size="lg"
+              disabled={selectionDisabled || remoteUrl.trim().length === 0}
+            >
+              Processar URL
+            </Button>
+            <p className="text-xs opacity-70">
+              Precisa ser o link direto de um MP4, WebM ou MOV com CORS. Links de páginas do
+              YouTube, TikTok, Instagram ou Drive não funcionam neste modo.
+            </p>
+          </form>
+        </div>
+      ) : null}
 
       {status ? (
-        <div
-          className="flex flex-wrap items-center gap-3"
-          aria-live="polite"
-          aria-atomic="true"
-        >
+        <div className="flex flex-wrap items-center gap-3" aria-live="polite" aria-atomic="true">
           <p className="font-display text-lg uppercase">{status}</p>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={cancelSelection}
-          >
+          <Button variant="ghost" size="sm" onClick={cancelSelection}>
             Cancelar
           </Button>
         </div>
@@ -396,7 +581,11 @@ export function LocalVideoDubber() {
             key={selected.id}
             selected={selected}
             onInteractionLockChange={setStageLocked}
-            onAdoptVideo={adoptFromMatch}
+            multiplayer={multiplayer}
+            match={match}
+            onLeaveMatch={() => {
+              void leaveMatchScreen()
+            }}
           />
         </div>
       ) : null}
@@ -408,19 +597,21 @@ export function LocalVideoDubber() {
 const MODE_LABELS: Record<TakeMode, string> = {
   full: 'Cena inteira',
   segment: 'Fala a fala',
-  duet: 'Em dupla',
-  online: 'Online',
+  online: 'Multiplayer',
 }
 
 function LocalDubStage({
   selected,
   onInteractionLockChange,
-  onAdoptVideo,
+  multiplayer,
+  match,
+  onLeaveMatch,
 }: {
   selected: SelectedVideo
   onInteractionLockChange: (locked: boolean) => void
-  /** Abre neste aparelho um vídeo que veio de fora — hoje, da partida online. */
-  onAdoptVideo: (file: File) => void
+  multiplayer: boolean
+  match: OnlineMatch
+  onLeaveMatch: () => void
 }) {
   const playerRef = useRef<VideoPlayerHandle | null>(null)
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null)
@@ -452,9 +643,8 @@ function LocalDubStage({
   /** Quantos personagens a cena tem. Quem sabe é a pessoa, não o algoritmo. */
   const [voiceCount, setVoiceCount] = useState(1)
 
-  const [takeMode, setTakeMode] = useState<TakeMode>('full')
+  const [takeMode, setTakeMode] = useState<TakeMode>(multiplayer ? 'online' : 'full')
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0)
-  const [duet, setDuet] = useState<DuetSession | null>(null)
 
   /**
    * Falas digitadas pela pessoa, por trecho detectado.
@@ -632,12 +822,19 @@ function LocalDubStage({
 
   /** Trechos em ordem, com o texto digitado no lugar do rótulo genérico. */
   const orderedSegments = useMemo(() => {
+    if (multiplayer && match.state) {
+      return match.state.segments.map((segment, index) => ({
+        ...segment,
+        sceneId: selected.id,
+        orderIndex: index,
+      }))
+    }
     const base = transcriptSegments ?? (reference ? orderSegments(reference.segments) : [])
     return base.map((segment) => {
       const typed = texts[segment.id]?.trim()
       return typed !== undefined && typed.length > 0 ? { ...segment, text: typed } : segment
     })
-  }, [reference, texts, transcriptSegments])
+  }, [match.state, multiplayer, reference, selected.id, texts, transcriptSegments])
 
   /**
    * Personagens derivados das vozes detectadas.
@@ -658,23 +855,11 @@ function LocalDubStage({
     }))
   }, [orderedSegments, selected.id])
 
-  const duetAvailable = characters.length >= MIN_DUET_CHARACTERS
-
-  /** No dueto, a fala da vez é decidida pelo rodízio, não pela pessoa. */
-  const duetSegment = useMemo(() => {
-    if (takeMode !== 'duet' || !duet) return undefined
-    const playable = playableSegments(orderedSegments, duet.players)
-    const index = nextPendingIndex(orderedSegments, duet)
-    return index === -1 ? undefined : playable[index]
-  }, [takeMode, duet, orderedSegments])
-
-  const duetFinished = takeMode === 'duet' && duet !== null && isComplete(orderedSegments, duet)
-
   /**
    * Cena da partida online.
    *
-   * Só os trechos entram na rede — o vídeo fica com cada um. O texto vai junto
-   * porque é a legenda que a outra pessoa vai ler para dublar.
+   * O servidor guarda esta configuração como a versão canônica da sala. O
+   * arquivo sobe separadamente, direto para o Blob, ou continua na URL de origem.
    */
   const onlineScene = useMemo(
     () => ({
@@ -690,16 +875,8 @@ function LocalDubStage({
         text: segment.text.slice(0, 300),
       })),
     }),
-    [
-      orderedSegments,
-      selected.durationMs,
-      selected.fileName,
-      selected.id,
-      selected.sourceUrl,
-    ],
+    [orderedSegments, selected.durationMs, selected.fileName, selected.id, selected.sourceUrl],
   )
-  const match = useOnlineMatch(onlineScene)
-
   /** Tomadas da partida, dos dois jogadores, prontas para a costura. */
   const onlineTakes = useMemo(() => {
     if (takeMode !== 'online' || !match.state) return undefined
@@ -717,11 +894,9 @@ function LocalDubStage({
   const activeSegment =
     takeMode === 'segment'
       ? (orderedSegments[activeSegmentIndex] ?? orderedSegments[0])
-      : takeMode === 'duet'
-        ? duetSegment
-        : takeMode === 'online'
-          ? onlineSegment
-          : undefined
+      : takeMode === 'online'
+        ? onlineSegment
+        : undefined
 
   const analysisWindow = useMemo(
     () => (activeSegment ? analysisWindowFor(activeSegment, selected.durationMs) : undefined),
@@ -735,17 +910,14 @@ function LocalDubStage({
    * seguir. Se a única forma de trocar de fala for subir até a lista, o modo
    * fala-a-fala fica cansativo justamente onde deveria ser ágil.
    */
-  const goToSegment = useCallback(
-    (index: number) => {
-      setActiveSegmentIndex(index)
-      recorderResetRef.current?.()
-      // Levar o vídeo até a fala é metade da explicação: a pessoa lê o texto na
-      // barra e vê o quadro em que aquilo é dito, antes de apertar gravar.
-      const segment = segmentsRef.current[index]
-      if (segment) playerRef.current?.seekMs(Math.max(0, segment.startMs - 400))
-    },
-    [],
-  )
+  const goToSegment = useCallback((index: number) => {
+    setActiveSegmentIndex(index)
+    recorderResetRef.current?.()
+    // Levar o vídeo até a fala é metade da explicação: a pessoa lê o texto na
+    // barra e vê o quadro em que aquilo é dito, antes de apertar gravar.
+    const segment = segmentsRef.current[index]
+    if (segment) playerRef.current?.seekMs(Math.max(0, segment.startMs - 400))
+  }, [])
   const recorderResetRef = useRef<(() => void) | null>(null)
 
   const nextPendingSegmentIndex = useCallback(
@@ -756,7 +928,11 @@ function LocalDubStage({
         const segment = orderedSegments[index]
         // Trecho no original já está resolvido: mandar gravar ali seria desfazer
         // a escolha da pessoa.
-        return segment !== undefined && !isOriginal(sources, segment.id) && recorded[segment.id] === undefined
+        return (
+          segment !== undefined &&
+          !isOriginal(sources, segment.id) &&
+          recorded[segment.id] === undefined
+        )
       }
       for (let index = fromIndex + 1; index < orderedSegments.length; index += 1) {
         if (pending(index)) return index
@@ -774,9 +950,7 @@ function LocalDubStage({
   /** Vai para a próxima fala pendente; se não houver, para na seguinte. */
   const goToNextPending = useCallback(() => {
     const next = nextPendingSegmentIndex(activeSegmentIndex, takesBySegmentRef.current)
-    goToSegment(
-      next === -1 ? Math.min(activeSegmentIndex + 1, orderedSegments.length - 1) : next,
-    )
+    goToSegment(next === -1 ? Math.min(activeSegmentIndex + 1, orderedSegments.length - 1) : next)
   }, [activeSegmentIndex, goToSegment, nextPendingSegmentIndex, orderedSegments.length])
 
   /**
@@ -798,7 +972,11 @@ function LocalDubStage({
   const subtitles = useMemo<SubtitleSegment[]>(
     () =>
       orderedSegments
-        .filter((segment) => texts[segment.id]?.trim())
+        .filter((segment) =>
+          multiplayer && match.state
+            ? segment.text.trim().length > 0
+            : Boolean(texts[segment.id]?.trim()),
+        )
         .map((segment) => ({
           id: `${segment.id}--sub`,
           sceneId: selected.id,
@@ -807,7 +985,7 @@ function LocalDubStage({
           endMs: segment.endMs,
           text: segment.text,
         })),
-    [orderedSegments, texts, selected.id],
+    [match.state, multiplayer, orderedSegments, texts, selected.id],
   )
 
   const startVideo = useCallback(async (fromMs: number) => {
@@ -882,19 +1060,6 @@ function LocalDubStage({
     }
   }, [isRecording, analysisWindow, videoElement, stopRecording])
 
-  /** Registra a tomada no dueto e passa a vez (§100: inaudível não consome turno). */
-  useEffect(() => {
-    if (takeMode !== 'duet' || !duet || !duetSegment) return
-    const owner = segmentOwner(duetSegment, duet.players)
-    if (!owner) return
-    if (!recorder.attempts.some((attempt) => attempt.segmentId === duetSegment.id)) return
-    setDuet((current) =>
-      current && current.takes[duetSegment.id] === undefined
-        ? recordTake(current, duetSegment.id, owner.id)
-        : current,
-    )
-  }, [takeMode, duet, duetSegment, recorder.attempts])
-
   const scoreBySegment = useMemo(() => bestScoreBySegment(recorder.attempts), [recorder.attempts])
   const takesBySegment = useMemo(() => takeStatesBySegment(recorder.attempts), [recorder.attempts])
   takesBySegmentRef.current = takesBySegment
@@ -945,9 +1110,7 @@ function LocalDubStage({
       const target = event.target
       const editing =
         target instanceof HTMLElement &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       if (editing || event.metaKey || event.ctrlKey || event.altKey) return
 
       if (event.code === 'Space') {
@@ -993,6 +1156,20 @@ function LocalDubStage({
       sendRecorder({ type: 'RESET' })
     }
   }, [sendRecorder])
+
+  // Se o servidor aceitou a fala, mas a resposta do POST se perdeu, o polling
+  // ainda traz a tomada canônica. Descartar a prévia antiga impede que esse WAV
+  // seja reenviado por engano como a próxima fala do mesmo personagem.
+  const previewSegmentId = recorder.currentAttempt?.segmentId
+  useEffect(() => {
+    if (
+      takeMode === 'online' &&
+      previewSegmentId !== undefined &&
+      match.state?.takes[previewSegmentId] !== undefined
+    ) {
+      sendRecorder({ type: 'RESET' })
+    }
+  }, [match.state?.takes, previewSegmentId, sendRecorder, takeMode])
 
   const liveWaveformActive =
     state.matches('preparing') || state.matches('countdown') || state.matches('recording')
@@ -1059,6 +1236,24 @@ function LocalDubStage({
         />
       ) : null}
 
+      {takeMode === 'online' && activeSegment ? (
+        <div
+          className="sticky top-0 z-30 -mx-4 border-y-2 border-accent bg-ink/95 px-4 py-3 backdrop-blur sm:-mx-8 sm:px-8"
+          data-testid="online-fala-da-vez"
+          aria-live="polite"
+        >
+          <p className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
+            {match.myTurn ? 'Sua fala agora' : 'Fala da vez'} ·{' '}
+            {orderedSegments.findIndex((segment) => segment.id === activeSegment.id) + 1}/
+            {orderedSegments.length} · {formatTimecode(activeSegment.startMs)}–
+            {formatTimecode(activeSegment.endMs)}
+          </p>
+          <p className="mt-1 font-display text-xl uppercase leading-tight text-paper">
+            {activeSegment.text.trim() || 'Sem texto para esta fala'}
+          </p>
+        </div>
+      ) : null}
+
       <VideoPlayer
         ref={attachVideo}
         src={selected.url}
@@ -1111,50 +1306,53 @@ function LocalDubStage({
             className="flex flex-col gap-3 border-t-2 border-ink-line p-4"
             aria-labelledby="referencia-enviada-titulo"
           >
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 id="referencia-enviada-titulo" className="font-display text-2xl uppercase">
-                Referência vocal
-              </h2>
-              <p className="mt-1 text-xs text-muted">
-                A onda segue a cena. Durante a dublagem, sua voz real aparece em verde por cima.
-              </p>
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 id="referencia-enviada-titulo" className="font-display text-2xl uppercase">
+                  Referência vocal
+                </h2>
+                <p className="mt-1 text-xs text-muted">
+                  A onda segue a cena. Durante a dublagem, sua voz real aparece em verde por cima.
+                </p>
+              </div>
+              <Tag tone={reference.speechRatio >= 0.08 ? 'ok' : 'warn'}>
+                {reference.segments.length === 1
+                  ? '1 trecho detectado'
+                  : `${String(reference.segments.length)} trechos detectados`}
+              </Tag>
             </div>
-            <Tag tone={reference.speechRatio >= 0.08 ? 'ok' : 'warn'}>
-              {reference.segments.length === 1
-                ? '1 trecho detectado'
-                : `${String(reference.segments.length)} trechos detectados`}
-            </Tag>
-          </div>
 
-          <div className="h-24 border-2 border-ink-line bg-ink-soft">
-            <Waveform
-              peaks={reference.peaks}
-              durationMs={selected.durationMs}
-              mediaTimeRef={mediaTimeRef}
-              liveOverlayRef={recorder.liveWaveformRef}
-              liveOverlayActive={liveWaveformActive}
-              onSeek={mediaInteractionLocked ? undefined : seekVideo}
-              label={
-                liveWaveformActive
-                  ? 'Forma de onda da referência com sua voz ao vivo'
-                  : 'Forma de onda da referência do vídeo enviado'
-              }
-            />
-          </div>
-          <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted" aria-label="Legenda da onda">
-            <span className="inline-flex items-center gap-2">
-              <span className="h-2 w-5 bg-muted" aria-hidden="true" /> Referência
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <span className="h-2 w-5 bg-ok" aria-hidden="true" /> Sua voz ao vivo
-            </span>
-          </div>
-          <p className="text-xs text-muted">
-            A pontuação compara sua voz com o áudio completo do vídeo. Música, efeitos e várias
-            pessoas podem reduzir a precisão. Articulação fica indisponível porque esta cena não
-            possui o corpus necessário para uma calibração honesta.
-          </p>
+            <div className="h-24 border-2 border-ink-line bg-ink-soft">
+              <Waveform
+                peaks={reference.peaks}
+                durationMs={selected.durationMs}
+                mediaTimeRef={mediaTimeRef}
+                liveOverlayRef={recorder.liveWaveformRef}
+                liveOverlayActive={liveWaveformActive}
+                onSeek={mediaInteractionLocked ? undefined : seekVideo}
+                label={
+                  liveWaveformActive
+                    ? 'Forma de onda da referência com sua voz ao vivo'
+                    : 'Forma de onda da referência do vídeo enviado'
+                }
+              />
+            </div>
+            <div
+              className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted"
+              aria-label="Legenda da onda"
+            >
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2 w-5 bg-muted" aria-hidden="true" /> Referência
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2 w-5 bg-ok" aria-hidden="true" /> Sua voz ao vivo
+              </span>
+            </div>
+            <p className="text-xs text-muted">
+              A pontuação compara sua voz com o áudio completo do vídeo. Música, efeitos e várias
+              pessoas podem reduzir a precisão. Articulação fica indisponível porque esta cena não
+              possui o corpus necessário para uma calibração honesta.
+            </p>
           </section>
         </details>
       ) : (
@@ -1196,77 +1394,85 @@ function LocalDubStage({
           <Countdown value={state.context.countdown} onCancel={recorder.cancel} />
         ) : null}
 
-        {(state.matches('preparing') || state.matches('countdown') || state.matches('recording')) && (
+        {(state.matches('preparing') ||
+          state.matches('countdown') ||
+          state.matches('recording')) && (
           <LevelMeter peak={recorder.level} recording={state.matches('recording')} />
         )}
 
         {reference && (state.matches('idle') || state.matches('preview')) ? (
           <details className="border-2 border-ink-line" data-testid="ajustes-da-cena">
             <summary className="min-h-12 cursor-pointer px-4 py-3 font-display text-sm uppercase tracking-widest">
-              Ajustes da cena · {MODE_LABELS[takeMode]} · {subtitles.length}/
-              {orderedSegments.length} falas escritas
+              {multiplayer ? 'Configuração da partida' : 'Ajustes da cena'} ·{' '}
+              {MODE_LABELS[takeMode]} · {subtitles.length}/{orderedSegments.length} falas escritas
             </summary>
             <div className="flex flex-col gap-4 border-t-2 border-ink-line p-4">
-              {orderedSegments.length > 1 ? (
-                <ModePicker
-                  value={takeMode}
-                  duetAvailable={duetAvailable}
-                  onChange={setTakeMode}
-                />
+              {!multiplayer && orderedSegments.length > 1 ? (
+                <ModePicker value={takeMode} onChange={setTakeMode} />
               ) : null}
 
-              <p className="text-xs text-muted">
-                As falas podem ser reconhecidas automaticamente aqui mesmo, no seu navegador — o
-                vídeo não sai do aparelho. Na primeira vez, o reconhecimento de fala baixa cerca de
-                90 MB e fica guardado para as próximas. Ele erra às vezes; todo campo continua
-                editável.
-              </p>
+              {multiplayer && match.state ? (
+                <p className="text-xs text-muted">
+                  A configuração foi travada quando o código foi gerado. Assim os dois aparelhos
+                  usam exatamente as mesmas falas e personagens.
+                </p>
+              ) : null}
 
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  variant="secondary"
-                  disabled={transcription.phase === 'running'}
-                  data-testid="local-transcrever"
-                  onClick={runTranscription}
-                >
-                  {transcription.phase === 'running'
-                    ? 'Reconhecendo…'
-                    : transcription.phase === 'done'
-                      ? 'Reconhecer de novo'
-                      : 'Descrever as falas'}
-                </Button>
+              {!match.state ? (
+                <p className="text-xs text-muted">
+                  {multiplayer
+                    ? 'As falas são reconhecidas primeiro neste navegador. Quando você gerar o código, o vídeo e esta configuração serão compartilhados somente com a partida. Na primeira vez, o reconhecimento baixa cerca de 90 MB e fica guardado para as próximas.'
+                    : 'As falas podem ser reconhecidas automaticamente aqui mesmo, no seu navegador — o vídeo não sai do aparelho. Na primeira vez, o reconhecimento de fala baixa cerca de 90 MB e fica guardado para as próximas. Ele erra às vezes; todo campo continua editável.'}
+                </p>
+              ) : null}
 
-                {transcription.phase === 'running' ? (
-                  <p className="text-xs text-muted" role="status">
-                    {transcription.loadedRatio > 0 && transcription.loadedRatio < 1
-                      ? `Baixando o reconhecimento de fala… ${String(Math.round(transcription.loadedRatio * 100))}%`
-                      : 'Ouvindo o vídeo. Em vídeos longos isso leva alguns minutos.'}
-                  </p>
-                ) : null}
+              {!match.state ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    variant="secondary"
+                    disabled={transcription.phase === 'running'}
+                    data-testid="local-transcrever"
+                    onClick={runTranscription}
+                  >
+                    {transcription.phase === 'running'
+                      ? 'Reconhecendo…'
+                      : transcription.phase === 'done'
+                        ? 'Reconhecer de novo'
+                        : 'Descrever as falas'}
+                  </Button>
 
-                {transcription.phase === 'done' ? (
-                  <p className="text-xs text-muted" role="status">
-                    {transcription.filled} de {orderedSegments.length} falas reconhecidas
-                    {transcription.missing > 0
-                      ? ` — ${String(transcription.missing)} ${transcription.missing === 1 ? 'continuou' : 'continuaram'} sem texto e ${transcription.missing === 1 ? 'pode' : 'podem'} ser preenchida${transcription.missing === 1 ? '' : 's'} à mão.`
-                      : '.'}
-                  </p>
-                ) : null}
-              </div>
+                  {transcription.phase === 'running' ? (
+                    <p className="text-xs text-muted" role="status">
+                      {transcription.loadedRatio > 0 && transcription.loadedRatio < 1
+                        ? `Baixando o reconhecimento de fala… ${String(Math.round(transcription.loadedRatio * 100))}%`
+                        : 'Ouvindo o vídeo. Em vídeos longos isso leva alguns minutos.'}
+                    </p>
+                  ) : null}
 
-              {transcription.phase === 'failed' ? (
+                  {transcription.phase === 'done' ? (
+                    <p className="text-xs text-muted" role="status">
+                      {transcription.filled} de {orderedSegments.length} falas reconhecidas
+                      {transcription.missing > 0
+                        ? ` — ${String(transcription.missing)} ${transcription.missing === 1 ? 'continuou' : 'continuaram'} sem texto e ${transcription.missing === 1 ? 'pode' : 'podem'} ser preenchida${transcription.missing === 1 ? '' : 's'} à mão.`
+                        : '.'}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {!match.state && transcription.phase === 'failed' ? (
                 <p className="border-2 border-warn px-3 py-2 text-xs text-warn" role="alert">
                   {transcription.message} Você ainda pode escrever as falas à mão.
                 </p>
               ) : null}
-              {takeMode === 'segment' ? (
+              {!match.state && takeMode === 'segment' ? (
                 <p className="text-xs text-muted">
                   Marque como <strong>voz original</strong> os trechos que você não quer dublar. Dá
                   para gravar só um personagem e deixar o outro falando como no vídeo.
                 </p>
               ) : null}
 
-              {transcriptSegments ? (
+              {!match.state && transcriptSegments ? (
                 <div className="flex flex-wrap items-center gap-3 border-2 border-ink-line p-3">
                   <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] text-muted">
                     Quantos personagens falam
@@ -1305,122 +1511,88 @@ function LocalDubStage({
                 </div>
               ) : null}
 
-              {orderedSegments.map((segment, index) => {
-                const usaOriginal = isOriginal(sources, segment.id)
-                return (
-                  <div
-                    key={segment.id}
-                    className="flex flex-col gap-2 border-2 border-ink-line p-3"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] tabular-nums text-muted">
-                        {index + 1}. {formatTimecode(segment.startMs)} –{' '}
-                        {formatTimecode(segment.endMs)}
-                      </span>
-                      {transcriptSegments && voiceCount > 1 ? (
-                        <button
-                          type="button"
-                          data-testid={`fala-voz-${String(index)}`}
-                          title="Trocar o personagem desta fala"
-                          onClick={() => {
-                            cycleVoice(segment.id)
-                          }}
-                          className="min-h-11 border-2 border-ink-line px-2 font-display text-[0.625rem] uppercase tracking-widest text-paper hover:border-paper"
-                        >
-                          {segment.characterId.replace('voz-', 'Voz ')}
-                        </button>
-                      ) : null}
+              {!match.state
+                ? orderedSegments.map((segment, index) => {
+                    const usaOriginal = isOriginal(sources, segment.id)
+                    return (
+                      <div
+                        key={segment.id}
+                        className="flex flex-col gap-2 border-2 border-ink-line p-3"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-body text-[0.6875rem] font-bold uppercase tracking-[0.16em] tabular-nums text-muted">
+                            {index + 1}. {formatTimecode(segment.startMs)} –{' '}
+                            {formatTimecode(segment.endMs)}
+                          </span>
+                          {transcriptSegments && voiceCount > 1 ? (
+                            <button
+                              type="button"
+                              data-testid={`fala-voz-${String(index)}`}
+                              title="Trocar o personagem desta fala"
+                              onClick={() => {
+                                cycleVoice(segment.id)
+                              }}
+                              className="min-h-11 border-2 border-ink-line px-2 font-display text-[0.625rem] uppercase tracking-widest text-paper hover:border-paper"
+                            >
+                              {segment.characterId.replace('voz-', 'Voz ')}
+                            </button>
+                          ) : null}
 
-                      {takeMode === 'segment' ? (
-                        <button
-                          type="button"
-                          aria-pressed={usaOriginal}
-                          data-testid={`local-fonte-${String(index)}`}
-                          onClick={() => {
-                            toggleSource(segment.id)
+                          {takeMode === 'segment' ? (
+                            <button
+                              type="button"
+                              aria-pressed={usaOriginal}
+                              data-testid={`local-fonte-${String(index)}`}
+                              onClick={() => {
+                                toggleSource(segment.id)
+                              }}
+                              className={`min-h-11 border-2 px-3 font-display text-[0.625rem] uppercase tracking-widest ${
+                                usaOriginal
+                                  ? 'border-accent bg-accent text-paper'
+                                  : 'border-ink-line text-muted hover:border-paper hover:text-paper'
+                              }`}
+                            >
+                              {usaOriginal ? 'Voz original' : 'Vou dublar'}
+                            </button>
+                          ) : null}
+                        </div>
+                        <label className="sr-only" htmlFor={`fala-${segment.id}`}>
+                          Texto do trecho {index + 1}
+                        </label>
+                        <input
+                          id={`fala-${segment.id}`}
+                          type="text"
+                          maxLength={300}
+                          value={texts[segment.id] ?? ''}
+                          placeholder="O que é dito neste trecho?"
+                          data-testid={`local-fala-${String(index)}`}
+                          onChange={(event) => {
+                            updateText(segment.id, event.target.value)
                           }}
-                          className={`min-h-11 border-2 px-3 font-display text-[0.625rem] uppercase tracking-widest ${
-                            usaOriginal
-                              ? 'border-accent bg-accent text-paper'
-                              : 'border-ink-line text-muted hover:border-paper hover:text-paper'
-                          }`}
-                        >
-                          {usaOriginal ? 'Voz original' : 'Vou dublar'}
-                        </button>
-                      ) : null}
-                    </div>
-                    <label className="sr-only" htmlFor={`fala-${segment.id}`}>
-                      Texto do trecho {index + 1}
-                    </label>
-                    <input
-                      id={`fala-${segment.id}`}
-                      type="text"
-                      maxLength={300}
-                      value={texts[segment.id] ?? ''}
-                      placeholder="O que é dito neste trecho?"
-                      data-testid={`local-fala-${String(index)}`}
-                      onChange={(event) => {
-                        updateText(segment.id, event.target.value)
-                      }}
-                      className="min-h-11 border-2 border-ink-line bg-ink-soft px-3 font-body text-sm text-paper placeholder:text-muted"
-                    />
-                  </div>
-                )
-              })}
+                          className="min-h-11 border-2 border-ink-line bg-ink-soft px-3 font-body text-sm text-paper placeholder:text-muted"
+                        />
+                      </div>
+                    )
+                  })
+                : null}
             </div>
           </details>
         ) : null}
 
-        {takeMode === 'duet' && !duet ? (
-          <DuetSetup
-            sceneId={selected.id}
-            characters={characters}
-            onStart={(session) => {
-              setDuet(session)
-            }}
-          />
-        ) : null}
-
-        {takeMode === 'duet' && duet && !duetFinished ? (
-          <DuetTurn
-            session={duet}
-            segments={orderedSegments}
-            characters={characters}
-            currentSegment={duetSegment ?? null}
-            onReset={() => {
-              setDuet(null)
-              recorder.send({ type: 'RESET' })
-            }}
-          />
-        ) : null}
-
-        {takeMode === 'duet' && duet && duetFinished ? (
-          <DuetSummary
-            session={duet}
-            segments={orderedSegments}
-            scoreBySegment={scoreBySegment}
-            onRestart={() => {
-              setDuet(null)
-              recorder.send({ type: 'RESET' })
-            }}
-          />
-        ) : null}
-
-        {takeMode === 'online' ? (
+        {multiplayer ? (
           <OnlineMatchPanel
             match={match}
+            scene={onlineScene}
             characters={characters}
-            videoName={selected.fileName}
+            videoId={selected.id}
             loadVideoBlob={async () => await (await fetch(selected.url)).blob()}
-            onAdoptVideo={onAdoptVideo}
+            onLeave={onLeaveMatch}
           />
         ) : null}
 
         {state.matches('idle') &&
         recorder.supported &&
         takeMode !== 'segment' &&
-        !duetFinished &&
-        !(takeMode === 'duet' && !duet) &&
         // No online o botão some fora da sua vez: apertar antes da hora daria
         // uma gravação que o servidor recusaria depois de a pessoa já ter
         // falado, que é a pior hora de descobrir.
@@ -1438,7 +1610,9 @@ function LocalDubStage({
                 : `● Começar a dublar${reference ? ' e pontuar' : ''}`}
             </Button>
             <p className="text-xs text-muted">
-              Vamos pedir acesso ao microfone. Sua voz não é enviada para nenhum servidor.
+              {multiplayer
+                ? 'Vamos pedir acesso ao microfone. Ao enviar a fala, ela fica disponível apenas nesta partida.'
+                : 'Vamos pedir acesso ao microfone. Sua voz não é enviada para nenhum servidor.'}
             </p>
           </div>
         ) : null}
@@ -1471,7 +1645,7 @@ function LocalDubStage({
           </p>
         ) : null}
 
-        {state.matches('preview') && recorder.currentAttempt && !duetFinished ? (
+        {state.matches('preview') && recorder.currentAttempt ? (
           <div className="flex flex-col gap-6">
             <div
               inert={exportingVideo}
@@ -1493,7 +1667,10 @@ function LocalDubStage({
               sourceFileName={selected.fileName}
               onExportingChange={setExportingVideo}
             />
-            {takeMode === 'online' && activeSegment && match.myTurn ? (
+            {takeMode === 'online' &&
+            activeSegment &&
+            match.myTurn &&
+            recorder.currentAttempt.segmentId === activeSegment.id ? (
               <Button
                 size="lg"
                 disabled={match.busy}
@@ -1501,10 +1678,12 @@ function LocalDubStage({
                 onClick={() => {
                   const attempt = recorder.currentAttempt
                   if (!attempt) return
+                  const segmentId = attempt.segmentId
+                  if (!segmentId || segmentId !== activeSegment.id) return
                   const enviar = async () => {
                     const wav = await (await fetch(attempt.wavUrl)).blob()
                     const enviada = await match.submit(
-                      activeSegment.id,
+                      segmentId,
                       wav,
                       attempt.clock.mediaStartOffsetMs,
                       attempt.clock.sampleRate,
@@ -1527,7 +1706,11 @@ function LocalDubStage({
                 data-testid="local-next-segment"
                 onClick={() => {
                   const next = nextPendingSegmentIndex(activeSegmentIndex, takesBySegment)
-                  goToSegment(next === -1 ? Math.min(activeSegmentIndex + 1, orderedSegments.length - 1) : next)
+                  goToSegment(
+                    next === -1
+                      ? Math.min(activeSegmentIndex + 1, orderedSegments.length - 1)
+                      : next,
+                  )
                 }}
               >
                 {nextPendingSegmentIndex(activeSegmentIndex, takesBySegment) === -1
@@ -1536,26 +1719,9 @@ function LocalDubStage({
               </Button>
             ) : null}
 
-            {takeMode === 'duet' ? (
-              // No dueto o turno já avançou; regravar aqui pegaria a fala do
-              // OUTRO jogador. A troca de mãos é explícita.
-              <Button
-                size="lg"
-                disabled={exportingVideo}
-                data-testid="local-duet-pass"
-                onClick={() => {
-                  recorder.send({ type: 'RESET' })
-                }}
-              >
-                {duetSegment && duet
-                  ? `Passar a vez — ${segmentOwner(duetSegment, duet.players)?.name ?? 'próximo'}`
-                  : 'Continuar'}
-              </Button>
-            ) : (
-              <Button size="lg" disabled={exportingVideo} onClick={recorder.retry}>
-                Gravar novamente
-              </Button>
-            )}
+            <Button size="lg" disabled={exportingVideo} onClick={recorder.retry}>
+              Gravar novamente
+            </Button>
           </div>
         ) : null}
 

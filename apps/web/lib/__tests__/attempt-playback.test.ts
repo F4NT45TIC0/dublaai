@@ -34,8 +34,9 @@ let rafCallbacks: Map<number, FrameRequestCallback>
 let nextRafId: number
 
 beforeEach(() => {
-  ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true
+  ;(
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true
   rafCallbacks = new Map()
   nextRafId = 1
   vi.stubGlobal(
@@ -86,7 +87,7 @@ function controlMedia<T extends HTMLMediaElement>(element: T): ControlledMedia &
   return { element, play, pause, isPaused: () => paused }
 }
 
-function mountPlayback(attempt = ATTEMPT) {
+function mountPlayback(attempt = ATTEMPT, playUntilMs?: number) {
   const video = controlMedia(document.createElement('video'))
   video.element.muted = false
   container = document.createElement('div')
@@ -94,7 +95,13 @@ function mountPlayback(attempt = ATTEMPT) {
   root = createRoot(container)
 
   act(() => {
-    root?.render(createElement(AttemptPlayback, { attempt, video: video.element }))
+    root?.render(
+      createElement(AttemptPlayback, {
+        attempt,
+        video: video.element,
+        ...(playUntilMs === undefined ? {} : { playUntilMs }),
+      }),
+    )
   })
 
   const audioElement = container.querySelector('audio')
@@ -120,6 +127,12 @@ function runNextFrame(perfMs = 0): void {
 }
 
 describe('AttemptPlayback — alinhamento determinístico', () => {
+  it('oferece uma única ação direta para ouvir o vídeo', () => {
+    const { button } = mountPlayback()
+
+    expect(button.textContent).toBe('Ouvir vídeo')
+  })
+
   it('remove o pré-roll e corrige drift pequeno ou grande contra o áudio mestre', async () => {
     const { audio, video, button } = mountPlayback()
 
@@ -235,6 +248,30 @@ describe('AttemptPlayback — alinhamento determinístico', () => {
     })
     expect(audio.isPaused()).toBe(true)
     expect(video.isPaused()).toBe(true)
+    expect(video.element.muted).toBe(false)
+  })
+
+  it('encerra áudio e vídeo no limite opcional da prévia parcial', async () => {
+    const { audio, video, button } = mountPlayback(ATTEMPT, 1_500)
+    await click(button)
+
+    audio.element.currentTime = 4.49
+    video.element.currentTime = 1.49
+    act(() => {
+      runNextFrame()
+    })
+    expect(audio.isPaused()).toBe(false)
+    expect(video.isPaused()).toBe(false)
+
+    audio.element.currentTime = 4.5
+    video.element.currentTime = 1.5
+    act(() => {
+      runNextFrame()
+    })
+
+    expect(audio.isPaused()).toBe(true)
+    expect(video.isPaused()).toBe(true)
+    expect(video.element.playbackRate).toBe(1)
     expect(video.element.muted).toBe(false)
   })
 

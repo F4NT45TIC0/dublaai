@@ -7,6 +7,14 @@ import type { RecorderAttempt } from '@/lib/use-recorder'
 export interface AttemptPlaybackProps {
   readonly attempt: RecorderAttempt
   readonly video: HTMLVideoElement | null
+  /**
+   * Encerra a prévia neste ponto da timeline do vídeo.
+   *
+   * A trilha costurada continua com a duração total para exportação; este
+   * limite serve só para não fazer uma cena parcial tocar silêncio depois da
+   * última fala que já ficou pronta.
+   */
+  readonly playUntilMs?: number
 }
 
 /**
@@ -20,7 +28,7 @@ export interface AttemptPlaybackProps {
  * A correção usa `playbackRate`, não `seek`: ±2% é imperceptível, enquanto um
  * seek trava a imagem e chama mais atenção que o próprio desvio.
  */
-export function AttemptPlayback({ attempt, video }: AttemptPlaybackProps) {
+export function AttemptPlayback({ attempt, video, playUntilMs }: AttemptPlaybackProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const previousVideoMutedRef = useRef<boolean | null>(null)
@@ -110,10 +118,13 @@ export function AttemptPlayback({ attempt, video }: AttemptPlaybackProps) {
     let delayedAudioStarted = videoTimeAtAudioZero <= 0
 
     const tick = () => {
+      const reachedPlaybackLimit =
+        playUntilMs !== undefined && video.currentTime * 1000 >= playUntilMs
       if (
         !playbackActiveRef.current ||
         video.paused ||
         video.ended ||
+        reachedPlaybackLimit ||
         (delayedAudioStarted && (audio.paused || audio.ended))
       ) {
         stop()
@@ -136,8 +147,7 @@ export function AttemptPlayback({ attempt, video }: AttemptPlaybackProps) {
         delayedAudioStarted = true
       }
 
-      const expectedVideoTime =
-        videoTimeAtAudioZero + audio.currentTime - audioTimeAtVideoZero
+      const expectedVideoTime = videoTimeAtAudioZero + audio.currentTime - audioTimeAtVideoZero
       const errorSec = expectedVideoTime - video.currentTime
 
       if (Math.abs(errorSec) > 0.25) {
@@ -153,17 +163,11 @@ export function AttemptPlayback({ attempt, video }: AttemptPlaybackProps) {
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-  }, [audioTimeAtVideoZero, stop, video, videoTimeAtAudioZero])
+  }, [audioTimeAtVideoZero, playUntilMs, stop, video, videoTimeAtAudioZero])
 
   return (
     <div className="flex flex-col gap-3">
-      <audio
-        ref={audioRef}
-        src={attempt.wavUrl}
-        preload="auto"
-        onEnded={stop}
-        className="hidden"
-      />
+      <audio ref={audioRef} src={attempt.wavUrl} preload="auto" onEnded={stop} className="hidden" />
 
       <div className="flex flex-wrap items-center gap-3">
         <Button
@@ -173,7 +177,7 @@ export function AttemptPlayback({ attempt, video }: AttemptPlaybackProps) {
             else void play().catch(() => undefined)
           }}
         >
-          {playing ? '■ Parar' : '▶ Ouvir com o vídeo'}
+          {playing ? 'Parar' : 'Ouvir vídeo'}
         </Button>
 
         <a
@@ -187,8 +191,8 @@ export function AttemptPlayback({ attempt, video }: AttemptPlaybackProps) {
 
       {attempt.clock.clockConfidence < 0.8 ? (
         <p className="border-2 border-warn px-3 py-2 text-xs text-warn">
-          O encaixe com o vídeo pode estar um pouco fora nesta tentativa — o navegador não
-          conseguiu medir o tempo dos quadros com precisão.
+          O encaixe com o vídeo pode estar um pouco fora nesta tentativa — o navegador não conseguiu
+          medir o tempo dos quadros com precisão.
         </p>
       ) : null}
     </div>

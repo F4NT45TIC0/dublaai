@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createMatchCode, normalizeMatchCode } from '@/lib/match-code'
-import { charactersOf, MIN_MATCH_CHARACTERS, type MatchState } from '@/lib/online-match'
+import { charactersOf, MATCH_CHARACTER_COUNT, type MatchState } from '@/lib/online-match'
 import { matchStore, MatchStoreUnavailable } from '@/lib/server/match-store'
 
 /** Partida é estado vivo: nada aqui pode ser pré-renderizado nem cacheado. */
@@ -13,9 +13,14 @@ export const dynamic = 'force-dynamic'
  * MB de "cena" no armazenamento com uma requisição só.
  */
 const createSchema = z.object({
+  hostId: z.string().min(1).max(100),
   videoId: z.string().min(1).max(200),
   videoName: z.string().min(1).max(300),
-  durationMs: z.number().int().positive().max(5 * 60_000),
+  durationMs: z
+    .number()
+    .int()
+    .positive()
+    .max(5 * 60_000),
   // Só HTTPS: o link é repassado para o navegador de quem entrar, e um
   // endereço `javascript:` ou `data:` guardado aqui viraria arma na outra
   // ponta.
@@ -50,10 +55,10 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: 'Dados da partida inválidos.' }, { status: 400 })
   }
 
-  const { videoId, videoName, durationMs, segments, videoUrl } = parsed.data
-  if (charactersOf(segments).length < MIN_MATCH_CHARACTERS) {
+  const { hostId, videoId, videoName, durationMs, segments, videoUrl } = parsed.data
+  if (charactersOf(segments).length !== MATCH_CHARACTER_COUNT) {
     return NextResponse.json(
-      { error: 'A partida online precisa de uma cena com pelo menos duas vozes.' },
+      { error: 'A partida multiplayer precisa de uma cena com exatamente duas vozes.' },
       { status: 400 },
     )
   }
@@ -69,6 +74,7 @@ export async function POST(request: Request): Promise<Response> {
   const now = Date.now()
   const state: MatchState = {
     code: storageKey,
+    hostId,
     videoId,
     videoName,
     durationMs,
@@ -76,10 +82,23 @@ export async function POST(request: Request): Promise<Response> {
     ...(videoUrl === undefined ? {} : { videoUrl }),
     players: [],
     takes: {},
+    storageAccess: process.env['BLOB_READ_WRITE_TOKEN'] ? 'private' : 'file',
     createdAt: now,
     updatedAt: now,
   }
 
-  await store.write(state)
-  return NextResponse.json({ code, state })
+  let written
+  try {
+    written = await store.write(state)
+  } catch (cause) {
+    if (cause instanceof MatchStoreUnavailable) {
+      return NextResponse.json({ error: cause.message }, { status: 503 })
+    }
+    throw cause
+  }
+  return NextResponse.json({
+    code,
+    state,
+    uploadAccess: written.access === 'file' ? null : written.access,
+  })
 }

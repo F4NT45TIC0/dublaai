@@ -62,6 +62,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </Link>
             <nav aria-label="Principal" className="flex items-center gap-2">
               <Link
+                href="/multiplayer"
+                className="border-2 border-ink px-3 py-1.5 font-display text-xs uppercase tracking-widest hover:bg-ink hover:text-paper sm:text-sm"
+              >
+                Multiplayer
+              </Link>
+              <Link
                 href="/enviar"
                 className="border-2 border-accent bg-accent px-3 py-1.5 font-display text-xs uppercase tracking-widest text-paper hover:border-ink hover:bg-ink sm:text-sm"
               >
@@ -78,8 +84,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <footer className="border-t-2 border-ink">
           <div className="mx-auto w-full max-w-[100rem] px-4 py-6 text-xs sm:px-8">
             <p className="max-w-prose opacity-70">
-              Seu vídeo e sua voz ficam no seu aparelho — o Dubla Aí não envia nada para servidor
-              nenhum. Use apenas material que você tenha o direito de usar.
+              Em Meu vídeo, seus arquivos ficam no aparelho. No Multiplayer, vídeo e falas são
+              compartilhados somente dentro da partida. Use apenas material que você tenha o direito
+              de usar.
             </p>
           </div>
         </footer>

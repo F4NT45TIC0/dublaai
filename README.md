@@ -24,13 +24,13 @@ comparação acontece em um domínio normalizado (MFCC com CMVN, F0 em cents
 relativo à mediana do próprio falante, alinhamento por DTW), onde o que sobra
 mede **a atuação, não as cordas vocais**.
 
-| Métrica | O que afirma |
-|---|---|
-| SINCRONIA | Se você entrou e saiu de cada fala na hora |
+| Métrica     | O que afirma                                                       |
+| ----------- | ------------------------------------------------------------------ |
+| SINCRONIA   | Se você entrou e saiu de cada fala na hora                         |
 | ARTICULAÇÃO | O quanto os sons que você produziu se parecem com os da referência |
-| RITMO | Se você correu ou arrastou |
-| ENTONAÇÃO | Se a melodia da fala bateu |
-| ENERGIA | Se a variação de intensidade bateu |
+| RITMO       | Se você correu ou arrastou                                         |
+| ENTONAÇÃO   | Se a melodia da fala bateu                                         |
+| ENERGIA     | Se a variação de intensidade bateu                                 |
 
 Nenhuma métrica devolve um número solto: toda uma delas carrega `status`
 (`ok` / `limited` / `unavailable`), `confidence` e um motivo em português
@@ -41,15 +41,15 @@ medir" — nunca 0. Detalhes em [`docs/SCORING.md`](docs/SCORING.md).
 
 ## Stack
 
-| Camada | Escolha |
-|---|---|
-| Web | Next.js 16 (App Router), React 19, TypeScript 6 strict |
-| Estilo | Tailwind v4 com tokens em `@theme` — visual autoral, editorial brutalista |
-| Áudio | Web Audio + AudioWorklet (captura PCM sample-accurate) |
-| DSP | Implementação própria, sem dependências: STFT, mel, MFCC, CMVN, YIN, VAD, DTW |
-| Testes | Vitest (unit/integração) + Playwright com mídia falsa (E2E) |
-| Monorepo | pnpm workspaces + Turborepo |
-| Mídia | ffmpeg + síntese de voz local (SAPI pt-BR) |
+| Camada   | Escolha                                                                       |
+| -------- | ----------------------------------------------------------------------------- |
+| Web      | Next.js 16 (App Router), React 19, TypeScript 6 strict                        |
+| Estilo   | Tailwind v4 com tokens em `@theme` — visual autoral, editorial brutalista     |
+| Áudio    | Web Audio + AudioWorklet (captura PCM sample-accurate)                        |
+| DSP      | Implementação própria, sem dependências: STFT, mel, MFCC, CMVN, YIN, VAD, DTW |
+| Testes   | Vitest (unit/integração) + Playwright com mídia falsa (E2E)                   |
+| Monorepo | pnpm workspaces + Turborepo                                                   |
+| Mídia    | ffmpeg + síntese de voz local (SAPI pt-BR)                                    |
 
 TypeScript está fixado em **6.0.3** de propósito: a versão 7 (porte nativo) ainda
 não é suportada pelo `typescript-eslint`, e perder as regras de lint com
@@ -109,7 +109,7 @@ das entradas:
 - uma URL HTTPS direta para um desses arquivos, desde que o host permita CORS
   (`http://localhost` também é aceito durante desenvolvimento).
 
-Nos dois casos, o limite é de **60 segundos e 250 MB**. Uma URL é baixada pelo
+Nos dois casos, o limite é de **5 minutos e 1 GB**. Uma URL é baixada pelo
 próprio navegador, sem cookies e sem passar por proxy do Dubla Aí; depois disso,
 o vídeo é tratado como `blob:` local pelo mesmo fluxo do seletor de arquivo.
 Links para páginas do YouTube, TikTok, Instagram ou Google Drive não são URLs
@@ -140,15 +140,15 @@ pnpm verify
 
 Roda lint, typecheck, testes e build — o portão de qualidade do §116.
 
-| Comando | O que faz |
-|---|---|
-| `pnpm lint` | ESLint com regras que codificam requisitos do projeto |
-| `pnpm typecheck` | `tsc --noEmit` em todos os pacotes |
-| `pnpm test` | Vitest |
-| `pnpm build` | Build de produção |
-| `pnpm content:build` | Regenera as cenas |
-| `pnpm test:e2e` | E2E com microfone falso (gera fixtures e faz build antes) |
-| `pnpm check:leaks` | Ciclos de gravação verificando vazamento (`LEAK_CYCLES=30` para o número do §68) |
+| Comando              | O que faz                                                                        |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `pnpm lint`          | ESLint com regras que codificam requisitos do projeto                            |
+| `pnpm typecheck`     | `tsc --noEmit` em todos os pacotes                                               |
+| `pnpm test`          | Vitest                                                                           |
+| `pnpm build`         | Build de produção                                                                |
+| `pnpm content:build` | Regenera as cenas                                                                |
+| `pnpm test:e2e`      | E2E com microfone falso (gera fixtures e faz build antes)                        |
+| `pnpm check:leaks`   | Ciclos de gravação verificando vazamento (`LEAK_CYCLES=30` para o número do §68) |
 
 O lint carrega requisitos como regras: `getUserMedia` fora do
 `AudioCaptureService`, `setInterval` como relógio, `Math.random` no motor de
@@ -157,25 +157,33 @@ alguém precisa lembrar.
 
 ---
 
-## Modo online (partida com um amigo)
+## Multiplayer (partida com um amigo)
 
-O modo online é o **único** lugar em que áudio sai do aparelho, e por isso é o
-único que precisa de configuração. Ele guarda as tomadas de voz num Blob store
-da Vercel:
+O Multiplayer fica em `/multiplayer`, ao lado de **Meu vídeo**. Uma pessoa cria
+a sala e escolhe o vídeo; a outra entra apenas com o código e recebe a mesma
+cena automaticamente. A primeira fala só é liberada quando as duas pessoas
+escolheram uma voz e os dois aparelhos terminaram de preparar o vídeo.
 
-1. no projeto da Vercel, abra **Storage → Blob** e crie um store;
+Esse é o único modo em que vídeo e tomadas de voz saem do aparelho. Arquivos
+grandes sobem direto do navegador para um Blob store da Vercel, sem atravessar
+o limite de corpo das Functions:
+
+1. no projeto da Vercel, abra **Storage → Blob** e crie um store **Private**;
 2. conecte-o ao projeto. A variável `BLOB_READ_WRITE_TOKEN` aparece sozinha;
 3. faça um novo deploy.
 
-Sem essa variável, a tela do modo online diz exatamente isso em vez de fingir
+Sem essa variável, a tela do Multiplayer diz exatamente isso em vez de fingir
 que funciona — e todo o resto do Dubla Aí segue normal, sem servidor nenhum.
+O modo privado é obrigatório porque o estado de turnos muda a cada jogada e
+precisa de leitura consistente; stores públicos podem servir uma versão antiga
+por até um minuto.
 
-O vídeo **não** trafega: cada pessoa abre o mesmo arquivo no próprio computador
-e a partida guarda só a impressão digital dele, recusando quem chegar com outro.
-As tomadas expiram em 24 horas.
+Cada partida exige exatamente duas vozes e duas pessoas. O código tem 12
+caracteres (`K7M2-9XQP-4TVB`) e funciona como o convite da sala. A sala deixa de
+aceitar acesso depois de 24 horas.
 
-O código da partida tem 12 caracteres (`K7M2-9XQP-4TVB`), e não 6 dígitos, por
-um motivo concreto: ele é a única coisa que protege as gravações. Com 6 dígitos,
+Ele não tem 6 dígitos por um motivo concreto: o código é a única coisa que
+protege as gravações. Com 6 dígitos,
 percorrer o milhão de combinações e baixar voz de estranhos seria questão de
 minutos.
 
@@ -187,8 +195,9 @@ compartilhado entre instâncias — e por isso só liga com `next dev` ou com
 
 ## Conteúdo e direitos
 
-O Dubla Aí não distribui conteúdo: o material é sempre um arquivo que a própria
-pessoa escolhe no computador. Use apenas o que você tem o direito de usar.
+Em **Meu vídeo**, o material fica no aparelho. No Multiplayer, a cena escolhida
+é compartilhada com a outra pessoa da sala. Use apenas o que você tem o direito
+de usar.
 
 ## Privacidade
 
@@ -203,22 +212,22 @@ Ao colar uma URL, o navegador faz a requisição diretamente ao host informado �
 esse host recebe a requisição e o IP como em qualquer download —, mas o arquivo
 não passa por um servidor do Dubla Aí.
 
-A exceção é o **modo online**, descrito acima: nele as tomadas de voz vão para o
-armazenamento da partida para que a outra pessoa possa ouvi-las. A tela avisa
-isso antes de qualquer gravação. Ver [`docs/SECURITY.md`](docs/SECURITY.md).
+A exceção é o **Multiplayer**, descrito acima: nele o vídeo e as tomadas de voz
+vão para o armazenamento da partida para que a outra pessoa possa recebê-los.
+A tela avisa isso antes de criar a sala. Ver [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ---
 
 ## Documentação
 
-| Documento | Assunto |
-|---|---|
-| [PROJECT_SPEC](docs/PROJECT_SPEC.md) | O que é o produto e o que é inegociável |
-| [ARCHITECTURE](docs/ARCHITECTURE.md) | Camadas, máquina de estados, race conditions |
-| [AUDIO_PIPELINE](docs/AUDIO_PIPELINE.md) | Captura, relógios, gravação, playback |
-| [SCORING](docs/SCORING.md) | Como cada métrica é calculada e calibrada |
-| [DATA_MODEL](docs/DATA_MODEL.md) | Entidades, RLS, armazenamento |
-| [MEDIA_PIPELINE](docs/MEDIA_PIPELINE.md) | Ingestão e verificações de publicação |
-| [FAILURE_MATRIX](docs/FAILURE_MATRIX.md) | Toda falha prevista e seu tratamento |
-| [SECURITY](docs/SECURITY.md) · [TESTING](docs/TESTING.md) · [RISKS](docs/RISKS.md) · [MVP](docs/MVP.md) | — |
-| [decisions/](docs/decisions/) | ADRs |
+| Documento                                                                                               | Assunto                                      |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| [PROJECT_SPEC](docs/PROJECT_SPEC.md)                                                                    | O que é o produto e o que é inegociável      |
+| [ARCHITECTURE](docs/ARCHITECTURE.md)                                                                    | Camadas, máquina de estados, race conditions |
+| [AUDIO_PIPELINE](docs/AUDIO_PIPELINE.md)                                                                | Captura, relógios, gravação, playback        |
+| [SCORING](docs/SCORING.md)                                                                              | Como cada métrica é calculada e calibrada    |
+| [DATA_MODEL](docs/DATA_MODEL.md)                                                                        | Entidades, RLS, armazenamento                |
+| [MEDIA_PIPELINE](docs/MEDIA_PIPELINE.md)                                                                | Ingestão e verificações de publicação        |
+| [FAILURE_MATRIX](docs/FAILURE_MATRIX.md)                                                                | Toda falha prevista e seu tratamento         |
+| [SECURITY](docs/SECURITY.md) · [TESTING](docs/TESTING.md) · [RISKS](docs/RISKS.md) · [MVP](docs/MVP.md) | —                                            |
+| [decisions/](docs/decisions/)                                                                           | ADRs                                         |

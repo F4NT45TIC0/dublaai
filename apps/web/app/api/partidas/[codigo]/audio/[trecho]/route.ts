@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { normalizeMatchCode } from '@/lib/match-code'
+import { isExpired } from '@/lib/online-match'
 import { matchStore, MatchStoreUnavailable } from '@/lib/server/match-store'
 
 export const dynamic = 'force-dynamic'
@@ -35,19 +36,27 @@ export async function GET(_request: Request, context: Context): Promise<Response
     throw cause
   }
 
-  // A partida precisa existir e conhecer o trecho. Sem esta conferência, a
+  // A partida precisa existir e conhecer a tomada. Sem esta conferência, a
   // rota viraria um leitor genérico do armazenamento.
   const state = await store.read(code)
-  if (!state?.segments.some((segment) => segment.id.replace(/[^a-zA-Z0-9_-]/g, '') === trecho)) {
+  const expectedUrl = `/api/partidas/${code}/audio/${trecho}`
+  if (
+    !state ||
+    isExpired(state, Date.now()) ||
+    !Object.values(state.takes).some((take) => take?.url === expectedUrl)
+  ) {
     return NextResponse.json({ error: 'Não encontrado.' }, { status: 404 })
   }
 
-  const bytes = await store.readAudio(code, trecho)
-  if (!bytes) return NextResponse.json({ error: 'Não encontrado.' }, { status: 404 })
+  const audio = await store.readAudio(code, trecho)
+  if (!audio) return NextResponse.json({ error: 'Não encontrado.' }, { status: 404 })
 
-  return new Response(bytes, {
+  return new Response(audio.kind === 'stream' ? audio.stream : audio.bytes, {
     headers: {
       'Content-Type': 'audio/wav',
+      'Content-Length': String(audio.contentLength),
+      ...(audio.kind === 'stream' ? { ETag: audio.etag } : {}),
+      'X-Content-Type-Options': 'nosniff',
       // A tomada é imutável (regravar exige outro trecho), mas é voz de alguém:
       // fica no cache do navegador, nunca em cache compartilhado.
       'Cache-Control': 'private, max-age=3600',

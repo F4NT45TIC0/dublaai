@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { decodeWav, encodeWav } from '@dubla/dsp'
 import type { SpeakerSegment } from '@dubla/shared'
 import { Button } from '@dubla/ui'
 import { stitchTakes, type Take } from '@/lib/stitch-takes'
 import { originalTakesFor, type SegmentSource } from '@/lib/segment-sources'
-import { bestTakePerSegment, STITCH_PAD_MS } from '@/lib/take-modes'
+import { STITCH_PAD_MS } from '@/lib/take-modes'
+import { planStitchedPlayback, type RemoteStitchedTake } from '@/lib/stitched-playback-plan'
 import type { RecorderAttempt } from '@/lib/use-recorder'
 import { DubbedVideoExport } from '@/components/upload/dubbed-video-export'
 import { AttemptPlayback } from './attempt-playback'
@@ -36,11 +37,7 @@ export interface StitchedPlaybackProps {
    * Sem elas o modo online não fecharia: cada pessoa ouviria só a própria voz,
    * e a graça é justamente responder à fala do outro.
    */
-  readonly remoteTakes?: readonly {
-    readonly segmentId: string
-    readonly url: string
-    readonly mediaStartOffsetMs: number
-  }[]
+  readonly remoteTakes?: readonly RemoteStitchedTake[]
 }
 
 /**
@@ -52,8 +49,9 @@ export interface StitchedPlaybackProps {
  * entrega ao mesmo player sincronizado das tentativas normais — com offset
  * zero, porque a trilha costurada já vive na grade do vídeo.
  *
- * A montagem acontece sob clique, não automaticamente: decodificar todos os
- * WAVs custa memória e a pessoa pode só querer regravar uma fala.
+ * A montagem acontece assim que as tomadas mudam. Desse modo o clique da pessoa
+ * já é o play, em vez de um primeiro clique invisível para preparar o áudio e
+ * um segundo para finalmente ouvi-lo.
  */
 export function StitchedPlayback({
   attempts,
@@ -71,21 +69,22 @@ export function StitchedPlayback({
   const urlRef = useRef<string | null>(null)
   /** Invalida uma montagem em andamento quando as tomadas mudam. */
   const buildIdRef = useRef(0)
+  /** Evita remontar a mesma trilha a cada heartbeat da partida. */
+  const autoBuiltSignatureRef = useRef('')
 
-  const best = bestTakePerSegment(attempts)
-  const originalCount = segments.filter((segment) => sources?.[segment.id] === 'original').length
+  const plan = useMemo(
+    () => planStitchedPlayback(attempts, segments, sources, remoteTakes),
+    [attempts, remoteTakes, segments, sources],
+  )
   // Trecho no original também é uma fala montada: ignorá-lo faria a contagem
   // mentir justamente para quem escolheu não dublar tudo.
-  const takeCount = best.size + originalCount + (remoteTakes?.length ?? 0)
+  const takeCount = plan.readySegmentIds.size
 
   // Tomada nova ou regravada invalida a costura anterior (§67 para o URL).
-  const takesSignature = [
-    ...[...best.values()].map((attempt) => attempt.id),
-    ...segments.filter((segment) => sources?.[segment.id] === 'original').map((s) => `orig:${s.id}`),
-    ...(remoteTakes ?? []).map((take) => `rem:${take.segmentId}:${take.url}`),
-  ].join('|')
+  const takesSignature = plan.signature
   useEffect(() => {
     buildIdRef.current += 1
+    autoBuiltSignatureRef.current = ''
     setStitched(null)
     setError(null)
     if (urlRef.current) {
@@ -112,7 +111,7 @@ export function StitchedPlayback({
       const takes: Take[] = []
       let sampleRate = 0
 
-      for (const [segmentId, attempt] of best) {
+      for (const [segmentId, attempt] of plan.localTakes) {
         const segment = bySegment.get(segmentId)
         if (!segment) continue
 
@@ -131,7 +130,7 @@ export function StitchedPlayback({
         })
       }
 
-      for (const remote of remoteTakes ?? []) {
+      for (const remote of plan.remoteTakes) {
         const segment = bySegment.get(remote.segmentId)
         if (!segment) continue
 
@@ -150,7 +149,7 @@ export function StitchedPlayback({
       }
 
       // Trechos com a voz original entram como tomadas comuns, de offset zero.
-      const usesOriginal = segments.some((segment) => sources?.[segment.id] === 'original')
+      const usesOriginal = plan.originalSegmentIds.size > 0
       if (usesOriginal && loadOriginalAudio) {
         const original = await loadOriginalAudio()
         if (buildIdRef.current !== buildId) return
@@ -170,6 +169,7 @@ export function StitchedPlayback({
         URL.revokeObjectURL(url)
         return
       }
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current)
       urlRef.current = url
 
       setStitched({
@@ -191,14 +191,27 @@ export function StitchedPlayback({
         result: null,
       })
     } catch {
-      setError('Não conseguimos montar a cena completa. As tomadas continuam disponíveis uma a uma.')
+      setError(
+        'Não conseguimos montar a cena completa. As tomadas continuam disponíveis uma a uma.',
+      )
     } finally {
       if (buildIdRef.current === buildId) setBuilding(false)
     }
-  }, [best, segments, durationMs, sources, loadOriginalAudio, remoteTakes])
+  }, [durationMs, loadOriginalAudio, plan, segments, sources])
+
+  // A pessoa não precisa clicar para montar e depois clicar de novo para
+  // ouvir. Assim que uma tomada muda, a costura é preparada em segundo plano e
+  // a única ação final que aparece é "Ouvir vídeo".
+  useEffect(() => {
+    if (takeCount === 0) return
+    if (autoBuiltSignatureRef.current === takesSignature) return
+    autoBuiltSignatureRef.current = takesSignature
+    void build()
+  }, [build, takeCount, takesSignature])
 
   const faltam = segments.length - takeCount
   const pronta = segments.length > 0 && faltam <= 0
+  const playUntilMs = pronta ? durationMs : plan.lastReadyEndMs
 
   return (
     <section
@@ -224,43 +237,34 @@ export function StitchedPlayback({
       */}
       {takeCount === 0 ? (
         <p className="text-sm text-muted">
-          Nenhuma fala gravada ainda. Grave a primeira e ela aparece aqui para você ouvir com o
-          vídeo.
+          Nenhuma fala gravada ainda. Grave a primeira e ela aparece aqui para você ouvir o vídeo.
         </p>
       ) : (
         <p className="text-sm text-muted">
           {pronta
             ? 'Todas as falas estão prontas. Ouça a cena inteira com a sua voz e baixe o vídeo.'
-            : `Dá para ouvir o que já tem — as ${String(faltam)} falas que faltam entram como silêncio até você gravá-las.`}
+            : `O vídeo toca até a última fala pronta. As ${String(faltam)} falas que faltam ficam em silêncio até você gravá-las.`}
         </p>
       )}
 
       {takeCount > 0 ? (
         stitched ? (
           <div className="flex flex-col gap-4">
-            <AttemptPlayback attempt={stitched} video={video} />
+            <AttemptPlayback attempt={stitched} video={video} playUntilMs={playUntilMs} />
             {sourceFileName ? (
-              <DubbedVideoExport
-                attempt={stitched}
-                video={video}
-                sourceFileName={sourceFileName}
-              />
+              <DubbedVideoExport attempt={stitched} video={video} sourceFileName={sourceFileName} />
             ) : null}
           </div>
         ) : (
           <Button
             size="hero"
-            disabled={building}
+            disabled={building || error === null}
             data-testid="stitched-build"
             onClick={() => {
               void build()
             }}
           >
-            {building
-              ? 'Montando…'
-              : pronta
-                ? '▶ Assistir minha cena dublada'
-                : '▶ Ouvir o que já gravei'}
+            {building ? 'Montando vídeo…' : error ? 'Tentar montar novamente' : 'Preparando vídeo…'}
           </Button>
         )
       ) : null}
