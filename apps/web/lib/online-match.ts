@@ -50,6 +50,13 @@ export interface MatchState {
    * de começar a jogar.
    */
   readonly videoShared?: boolean
+  /**
+   * Link de onde a cena veio, quando o anfitrião a abriu por URL.
+   *
+   * Preferido ao arquivo guardado: quem entra baixa direto da fonte, sem os
+   * 200 MB do teto nem o custo de o servidor servir o vídeo de novo.
+   */
+  readonly videoUrl?: string
   readonly createdAt: number
   readonly updatedAt: number
 }
@@ -107,7 +114,8 @@ export function joinMatch(
   }
   // Com o vídeo guardado na partida, os dois lados têm o mesmo arquivo por
   // construção — a conferência só faz sentido quando cada um trouxe o seu.
-  if (state.videoShared !== true && state.videoId !== videoId) {
+  const cenaVemDaPartida = state.videoShared === true || state.videoUrl !== undefined
+  if (!cenaVemDaPartida && state.videoId !== videoId) {
     return {
       ok: false,
       reason:

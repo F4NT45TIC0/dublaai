@@ -16,6 +16,10 @@ const createSchema = z.object({
   videoId: z.string().min(1).max(200),
   videoName: z.string().min(1).max(300),
   durationMs: z.number().int().positive().max(5 * 60_000),
+  // Só HTTPS: o link é repassado para o navegador de quem entrar, e um
+  // endereço `javascript:` ou `data:` guardado aqui viraria arma na outra
+  // ponta.
+  videoUrl: z.url().startsWith('https://').max(2_000).optional(),
   segments: z
     .array(
       z.object({
@@ -46,7 +50,7 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: 'Dados da partida inválidos.' }, { status: 400 })
   }
 
-  const { videoId, videoName, durationMs, segments } = parsed.data
+  const { videoId, videoName, durationMs, segments, videoUrl } = parsed.data
   if (charactersOf(segments).length < MIN_MATCH_CHARACTERS) {
     return NextResponse.json(
       { error: 'A partida online precisa de uma cena com pelo menos duas vozes.' },
@@ -69,6 +73,7 @@ export async function POST(request: Request): Promise<Response> {
     videoName,
     durationMs,
     segments,
+    ...(videoUrl === undefined ? {} : { videoUrl }),
     players: [],
     takes: {},
     createdAt: now,

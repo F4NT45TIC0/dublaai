@@ -14,15 +14,18 @@ export default function HomePage() {
       <section className="grid gap-10 border-b-2 border-ink py-12 lg:grid-cols-[1.1fr_1fr] lg:items-center lg:gap-16 lg:py-20">
         <div>
           {/*
-            `leading-none` cortava o acento do Í: em Anton os acentos sobem
-            acima da altura de caixa, e com entrelinha 1 a segunda linha invadia
-            a primeira. 1.04 devolve o ar exato de que o acento precisa sem
-            afrouxar o bloco.
+            Uma linha só, e por isso o tamanho vem daqui e não do token `mega`:
+            aquele foi calibrado para "Dubla" e "Aí" empilhados e, numa linha,
+            estouraria a coluna. O `clamp` acompanha a largura da tela, e o
+            `nowrap` garante que a quebra nunca volte sozinha num tamanho
+            intermediário.
+
+            A entrelinha folgada resolve o acento do Í: em Anton os acentos
+            sobem acima da altura de caixa e seriam cortados pelo limite do
+            bloco.
           */}
-          <h1 className="font-display text-mega uppercase leading-[1.04]">
-            Dubla
-            <br />
-            Aí
+          <h1 className="whitespace-nowrap font-display text-[clamp(2.75rem,8.5vw,7rem)] uppercase leading-[1.08] tracking-[-0.03em]">
+            Dubla Aí
           </h1>
 
           <p className="mt-6 max-w-2xl font-display text-title uppercase leading-[0.95]">

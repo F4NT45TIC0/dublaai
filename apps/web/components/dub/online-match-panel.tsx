@@ -53,9 +53,10 @@ export function OnlineMatchPanel({
         <div>
           <h3 className="font-display text-lg uppercase">Jogar com um amigo à distância</h3>
           <p className="mt-1 text-sm text-muted">
-            Só você precisa ter o vídeo: ele vai junto com a partida e a outra pessoa recebe
-            automaticamente ao entrar com o código. As falas gravadas também viajam, para que cada
-            um ouça a do outro antes de responder. Tudo some depois de 24 horas.
+            Só você precisa ter o vídeo: ele vai junto com a partida e a outra pessoa recebe ao
+            entrar com o código. Se você abriu a cena por link, é o link que viaja — mais rápido, e
+            sem teto de tamanho. As falas gravadas também viajam, para que cada um ouça a do outro
+            antes de responder. Tudo some depois de 24 horas.
           </p>
         </div>
 
@@ -131,10 +132,10 @@ export function OnlineMatchPanel({
           </p>
         </div>
 
-        {state.videoShared && onAdoptVideo ? (
+        {(state.videoShared || state.videoUrl !== undefined) && onAdoptVideo ? (
           <div className="flex flex-col gap-2 border-2 border-ink-line p-3">
             <p className="text-sm">
-              Esta partida traz o vídeo. Baixe para dublar a mesma cena que a outra pessoa.
+              Esta partida traz o vídeo. Baixe para dublar exatamente a mesma cena.
             </p>
             <Button
               variant="secondary"

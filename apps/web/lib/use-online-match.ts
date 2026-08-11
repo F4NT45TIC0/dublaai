@@ -12,6 +12,7 @@ import {
   sendTake,
   shareMatchVideo,
 } from '@/lib/online-match-client'
+import { downloadRemoteVideo } from '@/lib/remote-video'
 import {
   currentPlayer,
   currentSegment,
@@ -26,6 +27,8 @@ export interface OnlineMatchScene {
   readonly videoName: string
   readonly durationMs: number
   readonly segments: readonly MatchSegment[]
+  /** Presente quando a cena foi aberta por link. */
+  readonly videoUrl?: string
 }
 
 export interface OnlineMatch {
@@ -39,7 +42,7 @@ export interface OnlineMatch {
   readonly complete: boolean
   readonly waitingFor: string | null
   create: (video?: Blob) => Promise<string | null>
-  /** Baixa o vídeo guardado na partida. `null` quando não há. */
+  /** Traz a cena da partida — do link de origem ou do arquivo guardado. */
   pullVideo: () => Promise<File | null>
   /** Carrega uma partida pelo código, sem ainda ocupar personagem. */
   peek: (code: string) => Promise<boolean>
@@ -111,10 +114,11 @@ export function useOnlineMatch(scene: OnlineMatchScene): OnlineMatch {
         const result = await createMatch(scene)
         setState(result.state)
 
-        // O vídeo vai junto para que a outra pessoa não precise ter o arquivo.
-        // Se ele for grande demais, a partida continua de pé — só volta a
-        // exigir que os dois abram o mesmo arquivo.
-        if (video) {
+        // Com link, não há o que subir: quem entra baixa da mesma fonte. Sem
+        // link, o arquivo vai junto para que a outra pessoa não precise tê-lo —
+        // e se for grande demais, a partida continua de pé, só volta a exigir
+        // que os dois abram o mesmo arquivo.
+        if (video && !scene.videoUrl) {
           try {
             setState(
               await shareMatchVideo(result.state.code, playerId, video, scene.videoName),
@@ -140,10 +144,16 @@ export function useOnlineMatch(scene: OnlineMatchScene): OnlineMatch {
 
   const pullVideo = useCallback(async () => {
     const atual = stateRef.current
-    if (!atual?.videoShared) return null
+    if (!atual) return null
     setBusy(true)
     setError(null)
     try {
+      // O link vem primeiro: baixar da fonte não passa pelo nosso servidor,
+      // não esbarra no teto de 200 MB e chega pela CDN de quem publicou.
+      if (atual.videoUrl !== undefined) {
+        return await downloadRemoteVideo(atual.videoUrl)
+      }
+      if (!atual.videoShared) return null
       return await pullMatchVideo(atual.code, atual.videoName)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não conseguimos baixar o vídeo da partida.')

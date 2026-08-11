@@ -59,7 +59,11 @@ export function bestScoreBySegment(
   for (const attempt of attempts) {
     const segmentId = attempt.segmentId
     if (segmentId === undefined) continue
-    const score = attempt.result?.overall.value ?? null
+    // O motor já devolve inteiro, mas tomadas guardadas antes disso ficaram
+    // no armazenamento local com a nota crua — e são elas que aparecem na fita
+    // e na barra. Arredondar na leitura cobre as duas gerações.
+    const bruto = attempt.result?.overall.value ?? null
+    const score = bruto === null ? null : Math.round(bruto)
     const existing = map[segmentId]
     if (existing === undefined || (score !== null && (existing === null || score > existing))) {
       map[segmentId] = score

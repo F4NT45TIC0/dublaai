@@ -60,6 +60,14 @@ interface SelectedVideo extends LocalVideoMetadata {
   readonly fileSize: number
   readonly url: string
   readonly sourceKind: 'file' | 'url'
+  /**
+   * Endereço de onde a cena veio, quando veio de um link.
+   *
+   * Guardado para o modo online: se o anfitrião abriu o vídeo por URL, a
+   * partida leva o link, e quem entra baixa da mesma fonte. Sai mais barato e
+   * mais rápido do que empurrar o arquivo inteiro pelo nosso servidor.
+   */
+  readonly sourceUrl?: string
   readonly reference: VideoReference
 }
 
@@ -110,6 +118,7 @@ export function LocalVideoDubber() {
     file: File,
     sourceKind: SelectedVideo['sourceKind'],
     request: SelectionRequest,
+    sourceUrl?: string,
   ) => {
     const fileError = validateLocalVideoFile(file)
     if (fileError) throw new Error(fileError)
@@ -143,6 +152,7 @@ export function LocalVideoDubber() {
         fileSize: file.size,
         url,
         sourceKind,
+        ...(sourceUrl === undefined ? {} : { sourceUrl }),
         reference,
       })
       adopted = true
@@ -229,8 +239,9 @@ export function LocalVideoDubber() {
           )
         },
       })
+      const origem = remoteUrl.trim()
       setRemoteUrl('')
-      await adoptVideo(file, 'url', request)
+      await adoptVideo(file, 'url', request, origem)
     } catch (cause) {
       showSelectionError(cause, request)
     } finally {
@@ -662,6 +673,7 @@ function LocalDubStage({
       videoId: selected.id,
       videoName: selected.fileName,
       durationMs: Math.round(selected.durationMs),
+      ...(selected.sourceUrl === undefined ? {} : { videoUrl: selected.sourceUrl }),
       segments: orderedSegments.map((segment) => ({
         id: segment.id,
         characterId: segment.characterId,
@@ -670,7 +682,13 @@ function LocalDubStage({
         text: segment.text.slice(0, 300),
       })),
     }),
-    [orderedSegments, selected.durationMs, selected.fileName, selected.id],
+    [
+      orderedSegments,
+      selected.durationMs,
+      selected.fileName,
+      selected.id,
+      selected.sourceUrl,
+    ],
   )
   const match = useOnlineMatch(onlineScene)
 
