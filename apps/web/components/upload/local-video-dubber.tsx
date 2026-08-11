@@ -622,6 +622,7 @@ function LocalDubStage({
 
   const attachVideo = useCallback((handle: VideoPlayerHandle | null) => {
     playerRef.current = handle
+    handle?.setVolume(RECORDING_REFERENCE_VOLUME)
     setVideoElement(handle?.element ?? null)
   }, [])
 
@@ -1074,7 +1075,7 @@ function LocalDubStage({
       player.setMuted(false)
       return true
     } catch {
-      player.setVolume(1)
+      player.setVolume(RECORDING_REFERENCE_VOLUME)
       player.setMuted(false)
       return false
     }
@@ -1082,7 +1083,7 @@ function LocalDubStage({
 
   const stopVideo = useCallback(() => {
     playerRef.current?.pause()
-    playerRef.current?.setVolume(1)
+    playerRef.current?.setVolume(RECORDING_REFERENCE_VOLUME)
     playerRef.current?.setMuted(false)
   }, [])
 

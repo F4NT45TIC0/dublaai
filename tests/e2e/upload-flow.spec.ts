@@ -57,6 +57,13 @@ test.describe('arquivo ou URL de vídeo', () => {
       .evaluate((video: HTMLVideoElement) => video.duration)
     expect(selectedDuration).toBeGreaterThan(0)
     expect(selectedDuration).toBeLessThanOrEqual(60)
+    await expect
+      .poll(() =>
+        page
+          .locator('video[aria-label^="Vídeo para dublagem:"]')
+          .evaluate((video: HTMLVideoElement) => video.volume),
+      )
+      .toBe(0.1)
 
     await page.getByTestId('local-start-dub').click()
     await waitForLocalState(page, 'recording')
@@ -101,7 +108,7 @@ test.describe('arquivo ou URL de vídeo', () => {
           .locator('video[aria-label^="Vídeo para dublagem:"]')
           .evaluate((video: HTMLVideoElement) => video.volume),
       )
-      .toBe(1)
+      .toBe(0.1)
     await expect(page.getByRole('button', { name: 'Ouvir vídeo', exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: /Resultado da dublagem/i })).toBeVisible({
       timeout: 30_000,
