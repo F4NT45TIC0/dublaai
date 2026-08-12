@@ -22,6 +22,8 @@ export interface SegmentHudProps {
   onNext: () => void
   onRetry: () => void
   onToggleOriginal: () => void
+  /** Reabre a janela da nota. Ausente quando esta fala ainda não tem uma. */
+  readonly onReviewScore?: () => void
 }
 
 /**
@@ -52,6 +54,7 @@ export function SegmentHud({
   onNext,
   onRetry,
   onToggleOriginal,
+  onReviewScore,
 }: SegmentHudProps) {
   const acaoPrincipal =
     phase === 'recording' ? (
@@ -150,6 +153,22 @@ export function SegmentHud({
             </span>
             {isOriginal ? 'No original' : 'Voz original'}
           </button>
+
+          {/*
+            A nota mora numa janela agora, então precisa de uma porta. Ela fica
+            junto de "Voz original" porque as duas dizem respeito à mesma fala.
+          */}
+          {onReviewScore ? (
+            <button
+              type="button"
+              title="Ver a nota desta fala"
+              data-testid="segment-hud-rever-nota"
+              onClick={onReviewScore}
+              className="min-h-12 border-2 border-ink-line px-3 font-display text-xs uppercase tracking-widest text-paper hover:border-paper"
+            >
+              Rever nota
+            </button>
+          ) : null}
 
           {phase === 'preview' ? (
             <button

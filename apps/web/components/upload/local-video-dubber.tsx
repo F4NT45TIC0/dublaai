@@ -14,6 +14,8 @@ import { Countdown } from '@/components/dub/countdown'
 import { CharacterSetupDialog } from '@/components/dub/character-setup-dialog'
 import { LevelMeter } from '@/components/dub/level-meter'
 import { SegmentHud, type SegmentPhase } from '@/components/dub/segment-hud'
+import { formatMatchCode } from '@/lib/match-code'
+import { Modal } from '@/components/ui/modal'
 import { ModePicker } from '@/components/dub/mode-picker'
 import { SceneReviewPanel } from '@/components/dub/scene-review-panel'
 import { TakeStrip, type TakeStripCell } from '@/components/dub/take-strip'
@@ -1116,6 +1118,19 @@ function LocalDubStage({
   const isRecording = state.matches('recording')
   const stopRecording = recorder.stop
 
+  /** Explica o modo Cena inteira antes de a gravação começar. */
+  const [fullModeExplainer, setFullModeExplainer] = useState(false)
+
+  /**
+   * A nota aparece numa janela, e não na página.
+   *
+   * Ela é o resultado de um gesto — chega, é lida e sai de cena. Como bloco
+   * permanente, empurrava para baixo tudo que a pessoa usa para continuar
+   * dublando, e ainda mostrava a nota de uma tomada antiga durante a próxima.
+   */
+  const [scoreModalOpen, setScoreModalOpen] = useState(false)
+  const scoreShownForRef = useRef<string | null>(null)
+
   const openCastDialog = useCallback(() => {
     if (castDialogBusy) return
     setCastDialogOpen(true)
@@ -1189,6 +1204,16 @@ function LocalDubStage({
   }, [isRecording, analysisWindow, videoElement, stopRecording])
 
   const scoreBySegment = useMemo(() => bestScoreBySegment(recorder.attempts), [recorder.attempts])
+
+  const currentResult = recorder.currentAttempt?.result ?? null
+  const currentAttemptId = recorder.currentAttempt?.id ?? null
+  useEffect(() => {
+    if (!currentResult || !currentAttemptId) return
+    // Uma vez por tomada: reabrir a cada renderização impediria de fechar.
+    if (scoreShownForRef.current === currentAttemptId) return
+    scoreShownForRef.current = currentAttemptId
+    setScoreModalOpen(true)
+  }, [currentAttemptId, currentResult])
   const takesBySegment = useMemo(() => takeStatesBySegment(recorder.attempts), [recorder.attempts])
   takesBySegmentRef.current = takesBySegment
   // O atalho de teclado é montado antes desta função existir; o ref costura os
@@ -1336,9 +1361,17 @@ function LocalDubStage({
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <p className="font-body text-xs font-bold uppercase tracking-[0.16em] text-muted">
-            {selected.sourceKind === 'url' ? 'Cena recebida por URL' : 'Cena do computador'}
-          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="font-body text-xs font-bold uppercase tracking-[0.16em] text-muted">
+              {selected.sourceKind === 'url' ? 'Cena recebida por URL' : 'Cena do computador'}
+            </p>
+            {/*
+              O código fica ao lado do nome da cena porque é isto que se manda
+              para o amigo — antes ele só existia dentro do painel de ajustes, a
+              uma gaveta de distância de quem precisava dele.
+            */}
+            {multiplayer && match.state ? <MatchCodeChip code={match.state.code} /> : null}
+          </div>
           <h2 className="mt-1 truncate font-display text-3xl uppercase" title={selected.fileName}>
             {selected.fileName}
           </h2>
@@ -1374,6 +1407,13 @@ function LocalDubStage({
             void recorder.requestDub()
           }}
           onToggleOriginal={useOriginalAndAdvance}
+          {...(currentResult
+            ? {
+                onReviewScore: () => {
+                  setScoreModalOpen(true)
+                },
+              }
+            : {})}
         />
       ) : null}
 
@@ -1524,14 +1564,6 @@ function LocalDubStage({
                 <div className="flex flex-col gap-4">
                   {!multiplayer ? <ModePicker value={takeMode} onChange={handleModeChange} /> : null}
 
-                  {!multiplayer && takeMode === 'full' ? (
-                    <div className="flex flex-col gap-2 border-t border-ink-line pt-3">
-                      <p className="text-xs text-muted leading-relaxed">
-                        No modo Cena Inteira, você grava todo o vídeo do começo ao fim. Para revisar e dublar fala por fala, selecione <strong>"Fala a fala"</strong> acima.
-                      </p>
-                    </div>
-                  ) : null}
-
                   {multiplayer && match.state ? (
                     <p className="text-xs text-muted">
                       A configuração foi travada quando o código foi gerado. Assim os dois aparelhos
@@ -1548,20 +1580,33 @@ function LocalDubStage({
                 </div>
 
                 <div className="border-t-2 border-ink-line pt-4 mt-auto">
-                  <Button
-                    className="w-full"
-                    size="md"
-                    variant="secondary"
-                    disabled={transcription.phase === 'running'}
-                    data-testid="local-transcrever"
-                    onClick={openCastDialog}
-                  >
-                    {transcription.phase === 'running'
-                      ? 'Reconhecendo…'
-                      : transcription.phase === 'done'
-                        ? 'Reconhecer de novo'
-                        : 'Reconhecer falas da cena'}
-                  </Button>
+                  {!multiplayer && takeMode === 'full' ? (
+                    <Button
+                      className="w-full"
+                      size="md"
+                      data-testid="full-mode-start"
+                      onClick={() => {
+                        setFullModeExplainer(true)
+                      }}
+                    >
+                      Começar a dublar
+                    </Button>
+                  ) : (
+                    <Button
+                      className="w-full"
+                      size="md"
+                      variant="secondary"
+                      disabled={transcription.phase === 'running'}
+                      data-testid="local-transcrever"
+                      onClick={openCastDialog}
+                    >
+                      {transcription.phase === 'running'
+                        ? 'Reconhecendo…'
+                        : transcription.phase === 'done'
+                          ? 'Reconhecer de novo'
+                          : 'Reconhecer falas da cena'}
+                    </Button>
+                  )}
                 </div>
               </div>
             </details>
@@ -1758,9 +1803,7 @@ function LocalDubStage({
               <AttemptPlayback attempt={recorder.currentAttempt} video={videoElement} />
             </div>
 
-            {recorder.currentAttempt.result ? (
-              <ScoreCard result={recorder.currentAttempt.result} />
-            ) : state.context.errorCode === 'ANALYSIS_FAILED' ? (
+            {state.context.errorCode === 'ANALYSIS_FAILED' ? (
               <ErrorState code="ANALYSIS_FAILED" className="text-paper" />
             ) : null}
 
@@ -1851,7 +1894,137 @@ function LocalDubStage({
           </label>
         ) : null}
       </div>
+
+      <Modal
+        open={scoreModalOpen && currentResult !== null}
+        eyebrow="Resultado"
+        title="Sua nota"
+        testId="score-modal"
+        onClose={() => {
+          setScoreModalOpen(false)
+        }}
+        footer={
+          <Button
+            data-testid="score-modal-fechar"
+            onClick={() => {
+              setScoreModalOpen(false)
+            }}
+          >
+            Continuar
+          </Button>
+        }
+      >
+        {currentResult ? <ScoreCard result={currentResult} /> : null}
+      </Modal>
+
+      <Modal
+        open={fullModeExplainer}
+        eyebrow="Modo difícil"
+        title="Cena inteira"
+        description="Uma tomada só, do começo ao fim do vídeo — como numa cabine de dublagem de verdade."
+        testId="full-mode-modal"
+        onClose={() => {
+          setFullModeExplainer(false)
+        }}
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setFullModeExplainer(false)
+                handleModeChange('segment')
+              }}
+            >
+              Prefiro fala a fala
+            </Button>
+            <Button
+              data-testid="full-mode-confirm"
+              onClick={() => {
+                setFullModeExplainer(false)
+                void recorder.requestDub()
+              }}
+            >
+              Começar agora
+            </Button>
+          </>
+        }
+      >
+        <ul className="flex flex-col gap-3 text-sm">
+          {[
+            {
+              titulo: 'Não dá para repetir um pedaço',
+              texto:
+                'Errou no meio? A tomada recomeça do zero. É o que torna o modo difícil — e o que faz acertar valer.',
+            },
+            {
+              titulo: 'Uma nota para a cena toda',
+              texto:
+                'Você recebe uma pontuação só, medindo a cena inteira, e não uma por fala.',
+            },
+            {
+              titulo: 'O áudio original fica quase mudo',
+              texto:
+                'Ele toca a 10% só para você se guiar, e não entra no resultado. Vá pelo vídeo.',
+            },
+          ].map((item) => (
+            <li key={item.titulo} className="border-l-4 border-accent pl-3">
+              <p className="font-display text-base uppercase">{item.titulo}</p>
+              <p className="mt-0.5 text-muted">{item.texto}</p>
+            </li>
+          ))}
+        </ul>
+      </Modal>
     </section>
+  )
+}
+
+/** Código da partida com um toque para copiar. */
+function MatchCodeChip({ code }: { code: string }) {
+  const [copiado, setCopiado] = useState(false)
+
+  useEffect(() => {
+    if (!copiado) return
+    const id = setTimeout(() => {
+      setCopiado(false)
+    }, 2_000)
+    return () => {
+      clearTimeout(id)
+    }
+  }, [copiado])
+
+  const formatado = formatMatchCode(code)
+
+  return (
+    <div className="flex items-center gap-1 border-2 border-accent">
+      <span className="px-2 py-1 font-display text-sm uppercase tracking-[0.2em] tabular-nums">
+        {formatado}
+      </span>
+      <button
+        type="button"
+        data-testid="copiar-codigo"
+        aria-label={`Copiar o código da partida ${formatado}`}
+        onClick={() => {
+          const copiar = async () => {
+            try {
+              await navigator.clipboard.writeText(formatado)
+              setCopiado(true)
+            } catch {
+              // Área de transferência bloqueada: o código está à vista para
+              // ser lido e digitado, então não há nada a recuperar aqui.
+            }
+          }
+          void copiar()
+        }}
+        className="flex h-9 w-9 items-center justify-center border-l-2 border-accent hover:bg-accent hover:text-paper"
+      >
+        <span aria-hidden="true" className="font-display text-xs">
+          {copiado ? '✓' : '⧉'}
+        </span>
+      </button>
+      <span role="status" className="sr-only">
+        {copiado ? 'Código copiado' : ''}
+      </span>
+    </div>
   )
 }
 
