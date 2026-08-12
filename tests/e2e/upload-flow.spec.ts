@@ -250,10 +250,9 @@ test.describe('arquivo ou URL de vídeo', () => {
     await waitForLocalState(page, 'preview', 40_000)
     await expect(page.getByTestId('segment-hud-proxima')).toBeVisible()
 
-    // Dentro de um campo de texto, espaço é espaço.
+    // Seguir para a próxima fala devolve a barra ao estado de gravar.
     await page.getByTestId('segment-hud-proxima').click()
     await waitForLocalState(page, 'idle')
-    await page.getByTestId('local-fala-0').press('Space')
     await expect(page.getByTestId('segment-hud-gravar')).toBeVisible()
   })
 

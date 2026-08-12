@@ -1409,6 +1409,39 @@ function LocalDubStage({
           />
 
           {reference ? (
+            <div className="flex flex-col gap-2" data-testid="waveform-sob-video">
+              <div className="h-20 border-2 border-ink-line bg-ink-soft">
+                <Waveform
+                  peaks={reference.peaks}
+                  durationMs={selected.durationMs}
+                  mediaTimeRef={mediaTimeRef}
+                  liveOverlayRef={recorder.liveWaveformRef}
+                  liveOverlayActive={state.matches('recording')}
+                  onSeek={
+                    mediaInteractionLocked
+                      ? undefined
+                      : (ms) => {
+                          playerRef.current?.seekMs(ms)
+                        }
+                  }
+                  label="Forma de onda da cena"
+                />
+              </div>
+              <div
+                className="flex flex-wrap gap-x-5 gap-y-1 text-[0.6875rem] text-muted"
+                aria-label="Legenda da onda"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2 w-5 bg-muted" aria-hidden="true" /> Referência
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2 w-5 bg-ok" aria-hidden="true" /> Sua voz ao vivo
+                </span>
+              </div>
+            </div>
+          ) : null}
+
+          {reference ? (
             <p
               className="mt-1 border-l-4 border-warn bg-warn/10 px-3 py-2 text-xs leading-relaxed text-paper/80"
               data-testid="reference-audio-notice"
@@ -1439,7 +1472,9 @@ function LocalDubStage({
               onToggleSource={toggleSource}
               onSelect={goToSegment}
               onRecognizeAgain={openCastDialog}
-              onBackToSettings={() => handleModeChange(multiplayer ? 'online' : 'full')}
+              onBackToSettings={() => {
+                handleModeChange(multiplayer ? 'online' : 'full')
+              }}
             />
           ) : multiplayer && match.state ? (
             <OnlineMatchPanel
@@ -1461,7 +1496,31 @@ function LocalDubStage({
                   {subtitles.length}/{orderedSegments.length} falas escritas
                 </span>
               </summary>
-              <div className="flex flex-col justify-between flex-1 gap-6 p-4">
+              <div className="flex flex-1 flex-col gap-6 p-4">
+                <dl
+                  className="grid grid-cols-3 gap-2 border-2 border-ink-line bg-ink-soft/40 p-3"
+                  data-testid="resumo-da-cena"
+                >
+                  {[
+                    { termo: 'Duração', valor: formatTimecode(selected.durationMs) },
+                    {
+                      termo: 'Trechos',
+                      valor: String(orderedSegments.length),
+                    },
+                    {
+                      termo: 'Com texto',
+                      valor: `${String(subtitles.length)}/${String(orderedSegments.length)}`,
+                    },
+                  ].map((item) => (
+                    <div key={item.termo} className="flex flex-col gap-0.5">
+                      <dt className="font-body text-[0.625rem] font-bold uppercase tracking-[0.16em] text-muted">
+                        {item.termo}
+                      </dt>
+                      <dd className="font-display text-xl tabular-nums">{item.valor}</dd>
+                    </div>
+                  ))}
+                </dl>
+
                 <div className="flex flex-col gap-4">
                   {!multiplayer ? <ModePicker value={takeMode} onChange={handleModeChange} /> : null}
 

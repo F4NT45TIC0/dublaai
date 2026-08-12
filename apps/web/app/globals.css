@@ -67,6 +67,26 @@
 }
 
 @layer base {
+  /**
+   * Tema escuro.
+   *
+   * A paleta já vinha em pares — `paper` é a superfície clara e `ink` a
+   * escura, e todo componente usa um contra o outro. Trocar os valores de lugar
+   * inverte a interface inteira de forma coerente, sem precisar de uma segunda
+   * classe em cada elemento. É o que torna o tema barato aqui e caro em quase
+   * todo lugar.
+   *
+   * O acento não troca: ele é a identidade e funciona nos dois fundos.
+   */
+  :root[data-theme='dark'] {
+    --color-paper: #0f0e0c;
+    --color-paper-dim: #1c1a17;
+    --color-ink: #f2f0e9;
+    --color-ink-soft: #e6e3d9;
+    --color-ink-line: #cfcabb;
+    --color-muted: #7d786f;
+  }
+
   * {
     border-color: var(--color-ink);
   }

@@ -41,6 +41,8 @@ export default defineConfig(
       '**/test-results/**',
       // Runtime do onnxruntime-web copiado de node_modules no build.
       'apps/web/public/onnx/**',
+      // Script servido como arquivo estático: roda antes do bundle existir.
+      'apps/web/public/*.js',
     ],
   },
 

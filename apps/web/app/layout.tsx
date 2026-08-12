@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Anton, Archivo } from 'next/font/google'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { ThemeToggle } from '@/components/theme-toggle'
 import './globals.css'
 
 // Auto-hospedadas pelo next/font: nenhuma requisição a terceiros em runtime,
@@ -42,7 +43,15 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="pt-BR" className={`${anton.variable} ${archivo.variable}`}>
+    <html lang="pt-BR" className={`${anton.variable} ${archivo.variable}`} suppressHydrationWarning>
+      <head>
+        {/*
+          O tema é aplicado antes da primeira pintura. Sem isto a página nasce
+          clara e pisca para escura assim que o React monta — e esse flash é
+          justamente o que faz o tema escuro parecer quebrado.
+        */}
+        <script src="/tema.js" />
+      </head>
       <body className="flex min-h-dvh flex-col">
         <a
           href="#conteudo"
@@ -61,6 +70,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               Dubla&nbsp;Aí
             </Link>
             <nav aria-label="Principal" className="flex items-center gap-2">
+              <ThemeToggle />
               <Link
                 href="/multiplayer"
                 className="border-2 border-ink px-3 py-1.5 font-display text-xs uppercase tracking-widest hover:bg-ink hover:text-paper sm:text-sm"
