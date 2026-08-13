@@ -1560,9 +1560,17 @@ function LocalDubStage({
               onToggleSource={toggleSource}
               onSelect={goToSegment}
               onRecognizeAgain={openCastDialog}
-              onBackToSettings={() => {
-                handleModeChange(multiplayer ? 'online' : 'full')
-              }}
+              {...(multiplayer
+                ? // Na partida online não há ajuste para onde voltar: a
+                  // configuração fica travada quando o código é gerado, para
+                  // os dois aparelhos usarem as mesmas falas. O botão existia e
+                  // não fazia nada — pior do que não existir.
+                  {}
+                : {
+                    onBackToSettings: () => {
+                      handleModeChange('full')
+                    },
+                  })}
             />
           ) : multiplayer && match.state ? (
             <OnlineMatchPanel
