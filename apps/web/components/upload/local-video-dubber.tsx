@@ -14,6 +14,7 @@ import { Countdown } from '@/components/dub/countdown'
 import { CharacterSetupDialog } from '@/components/dub/character-setup-dialog'
 import { LevelMeter } from '@/components/dub/level-meter'
 import { SegmentHud, type SegmentPhase } from '@/components/dub/segment-hud'
+import Link from 'next/link'
 import { formatMatchCode } from '@/lib/match-code'
 import { Modal } from '@/components/ui/modal'
 import { ModePicker } from '@/components/dub/mode-picker'
@@ -460,15 +461,7 @@ export function LocalVideoDubber({ experience = 'solo' }: LocalVideoDubberProps)
               Escolher o vídeo novamente
             </Button>
           ) : null}
-          <Button
-            variant="secondary"
-            disabled={match.busy}
-            onClick={() => {
-              void leaveMatchScreen()
-            }}
-          >
-            Voltar
-          </Button>
+
         </section>
       ) : null}
 
@@ -1122,6 +1115,16 @@ function LocalDubStage({
   const [fullModeExplainer, setFullModeExplainer] = useState(false)
 
   /**
+   * Explica o multiplayer — e reaparece quando alguém tenta dublar sozinho.
+   *
+   * A sala é de dois: o rodízio de falas não existe com uma pessoa só. Em vez
+   * de deixar o botão de gravar dar um erro depois de a pessoa já ter falado,
+   * a janela diz antes o que falta e oferece a saída de jogar sozinho.
+   */
+  const [matchExplainer, setMatchExplainer] = useState<'intro' | 'sozinho' | null>(null)
+  const matchIntroShownRef = useRef(false)
+
+  /**
    * A nota aparece numa janela, e não na página.
    *
    * Ela é o resultado de um gesto — chega, é lida e sai de cena. Como bloco
@@ -1204,6 +1207,13 @@ function LocalDubStage({
   }, [isRecording, analysisWindow, videoElement, stopRecording])
 
   const scoreBySegment = useMemo(() => bestScoreBySegment(recorder.attempts), [recorder.attempts])
+
+  // Uma vez por sala: reabrir a cada renderização impediria de fechar.
+  useEffect(() => {
+    if (!multiplayer || matchIntroShownRef.current) return
+    matchIntroShownRef.current = true
+    setMatchExplainer('intro')
+  }, [multiplayer])
 
   const currentResult = recorder.currentAttempt?.result ?? null
   const currentAttemptId = recorder.currentAttempt?.id ?? null
@@ -1526,7 +1536,7 @@ function LocalDubStage({
               onLeave={onLeaveMatch}
             />
           ) : reference && (state.matches('idle') || state.matches('preview')) ? (
-            <details open className="flex flex-col justify-between h-full border-2 border-ink-line bg-ink" data-testid="ajustes-da-cena">
+            <details open className="flex h-full flex-col border-2 border-ink-line bg-ink" data-testid="ajustes-da-cena">
               <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-2 border-b-2 border-ink-line bg-ink-soft/40 px-4 py-3 font-display text-sm uppercase tracking-widest hover:bg-ink-soft">
                 <span>
                   {multiplayer ? 'Configuração da partida' : 'Ajustes da cena'} ·{' '}
@@ -1751,6 +1761,10 @@ function LocalDubStage({
               size="hero"
               data-testid="local-start-dub"
               onClick={() => {
+                if (multiplayer && !match.duplaCompleta) {
+                  setMatchExplainer('sozinho')
+                  return
+                }
                 void recorder.requestDub()
               }}
             >
@@ -1894,6 +1908,67 @@ function LocalDubStage({
           </label>
         ) : null}
       </div>
+
+      <Modal
+        open={matchExplainer !== null}
+        eyebrow={matchExplainer === 'sozinho' ? 'Falta gente na sala' : 'Como funciona'}
+        title={matchExplainer === 'sozinho' ? 'A sala ainda é sua' : 'Partida em dupla'}
+        description={
+          matchExplainer === 'sozinho'
+            ? 'A dublagem começa quando as duas pessoas estiverem prontas na sala. Sozinho não há de quem revezar.'
+            : 'Dois aparelhos, uma cena. Cada um pega um personagem e vocês se revezam fala a fala.'
+        }
+        testId="match-modal"
+        onClose={() => {
+          setMatchExplainer(null)
+        }}
+        footer={
+          <>
+            <Button asChild variant="secondary">
+              <Link href="/enviar">Jogar sozinho, fala a fala</Link>
+            </Button>
+            <Button
+              data-testid="match-modal-fechar"
+              onClick={() => {
+                setMatchExplainer(null)
+              }}
+            >
+              {matchExplainer === 'sozinho' ? 'Continuar esperando' : 'Entendi'}
+            </Button>
+          </>
+        }
+      >
+        <ul className="flex flex-col gap-3 text-sm">
+          {[
+            {
+              titulo: 'Só um precisa ter o vídeo',
+              texto:
+                'Quem cria a sala manda a cena junto; a outra pessoa recebe ao entrar com o código.',
+            },
+            {
+              titulo: 'Um de cada vez',
+              texto:
+                'A vez segue a ordem da cena. Enquanto for do outro, seu botão de gravar fica fora do ar.',
+            },
+            {
+              titulo: 'Você ouve o que o outro gravou',
+              texto: 'Antes de responder, a fala anterior toca com o vídeo — como numa conversa.',
+            },
+          ].map((item) => (
+            <li key={item.titulo} className="border-l-4 border-accent pl-3">
+              <p className="font-display text-base uppercase">{item.titulo}</p>
+              <p className="mt-0.5 text-muted">{item.texto}</p>
+            </li>
+          ))}
+        </ul>
+
+        {matchExplainer === 'sozinho' && match.state ? (
+          <p className="border-2 border-warn px-3 py-2 text-sm text-warn">
+            Mande o código <strong>{formatMatchCode(match.state.code)}</strong> para quem vai jogar
+            com você. A cena libera assim que os dois estiverem prontos.
+          </p>
+        ) : null}
+      </Modal>
 
       <Modal
         open={scoreModalOpen && currentResult !== null}

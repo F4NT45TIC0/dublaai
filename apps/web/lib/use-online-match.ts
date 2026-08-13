@@ -21,6 +21,7 @@ import {
   currentPlayer,
   currentSegment,
   isMatchComplete,
+  isMatchReady,
   isPlayerTurn,
   type MatchSegment,
   type MatchState,
@@ -46,6 +47,8 @@ export interface OnlineMatch {
   readonly activeSegment: MatchSegment | null
   readonly myTurn: boolean
   readonly complete: boolean
+  /** Os dois jogadores estão na sala e prontos. Antes disso não há rodízio. */
+  readonly duplaCompleta: boolean
   readonly waitingFor: string | null
   create: (scene: OnlineMatchScene, video?: Blob) => Promise<string | null>
   /** Repete o envio caso a sala tenha sido criada, mas a rede tenha falhado. */
@@ -429,6 +432,7 @@ export function useOnlineMatch(enabled = true): OnlineMatch {
     activeSegment,
     myTurn: state ? isPlayerTurn(state, playerId) : false,
     complete,
+    duplaCompleta: state ? isMatchReady(state, Date.now()) : false,
     waitingFor: waiting && waiting.id !== playerId ? waiting.name : null,
     create,
     shareVideo,
