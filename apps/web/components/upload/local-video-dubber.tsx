@@ -596,6 +596,17 @@ const MODE_LABELS: Record<TakeMode, string> = {
   online: 'Multiplayer',
 }
 
+/**
+ * Volume do som-guia durante a gravação.
+ *
+ * Fica DESLIGADO por padrão, e isso não é preferência: tocando pelas caixas, o
+ * microfone capta o áudio original e ele entra na sua tomada. O vídeo exportado
+ * saía com a voz original ao fundo por causa disso — a trilha original nunca é
+ * misturada na exportação, quem a trazia era o próprio microfone.
+ *
+ * Com fone, o guia ajuda a acertar a deixa e não vaza. Por isso ele existe como
+ * escolha, e não como padrão.
+ */
 const RECORDING_REFERENCE_VOLUME = 0.1
 
 function LocalDubStage({
@@ -638,6 +649,9 @@ function LocalDubStage({
   const goToNextPendingRef = useRef<(() => void) | null>(null)
   const useOriginalRef = useRef<(() => void) | null>(null)
   const stepSegmentRef = useRef<((delta: number) => void) | null>(null)
+
+  /** Som-guia durante a gravação. Desligado por padrão: vaza para o microfone. */
+  const [guideAudio, setGuideAudio] = useState(false)
 
   /** Quantos personagens a cena tem. Quem sabe é a pessoa, não o algoritmo. */
   const [voiceCount, setVoiceCount] = useState(2)
@@ -1055,26 +1069,29 @@ function LocalDubStage({
     [match.state, multiplayer, orderedSegments, texts, selected.id],
   )
 
-  const startVideo = useCallback(async (fromMs: number) => {
-    const player = playerRef.current
-    if (!player) return false
-    // No modo fala-a-fala a tomada não começa no zero da cena.
-    if (fromMs > 0) player.seekMs(fromMs)
-    else player.restart()
-    player.setVolume(RECORDING_REFERENCE_VOLUME)
-    player.setMuted(true)
-    try {
-      await player.play()
-      // Começar mudo mantém o `play()` compatível com autoplay; assim que a
-      // imagem roda, liberamos a referência em volume baixo.
-      player.setMuted(false)
-      return true
-    } catch {
-      player.setVolume(RECORDING_REFERENCE_VOLUME)
-      player.setMuted(false)
-      return false
-    }
-  }, [])
+  const startVideo = useCallback(
+    async (fromMs: number) => {
+      const player = playerRef.current
+      if (!player) return false
+      // No modo fala-a-fala a tomada não começa no zero da cena.
+      if (fromMs > 0) player.seekMs(fromMs)
+      else player.restart()
+      player.setVolume(guideAudio ? RECORDING_REFERENCE_VOLUME : 0)
+      player.setMuted(true)
+      try {
+        await player.play()
+        // Começar mudo mantém o `play()` compatível com autoplay. Só liberamos
+        // o som depois, e apenas se a pessoa pediu o guia.
+        if (guideAudio) player.setMuted(false)
+        return true
+      } catch {
+        player.setVolume(guideAudio ? RECORDING_REFERENCE_VOLUME : 0)
+        if (guideAudio) player.setMuted(false)
+        return false
+      }
+    },
+    [guideAudio],
+  )
 
   const stopVideo = useCallback(() => {
     playerRef.current?.pause()
@@ -1497,11 +1514,25 @@ function LocalDubStage({
               data-testid="reference-audio-notice"
               role="note"
             >
-              <strong className="font-display uppercase tracking-wider text-warn">
-                Som de referência · 10%
-              </strong>{' '}
-              — ele toca baixo apenas para orientar sua gravação e não entra no resultado. Para
-              preservar uma fala do vídeo, marque <strong>“Manter voz original”</strong> ao lado.
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={guideAudio}
+                  data-testid="som-guia"
+                  onChange={(event) => {
+                    setGuideAudio(event.target.checked)
+                  }}
+                  className="mt-0.5 h-4 w-4 accent-[var(--color-accent)]"
+                />
+                <span>
+                  <strong className="font-display uppercase tracking-wider text-warn">
+                    Som-guia a 10% · só com fone
+                  </strong>{' '}
+                  — nas caixas, o microfone capta o áudio original e ele entra na sua gravação. Sem
+                  fone, deixe desmarcado e siga pela imagem. Para preservar uma fala do vídeo, marque{' '}
+                  <strong>“Voz original”</strong> na barra.
+                </span>
+              </label>
             </p>
           ) : null}
         </div>
