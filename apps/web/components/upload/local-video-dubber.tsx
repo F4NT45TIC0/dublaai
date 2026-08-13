@@ -650,8 +650,15 @@ function LocalDubStage({
   const useOriginalRef = useRef<(() => void) | null>(null)
   const stepSegmentRef = useRef<((delta: number) => void) | null>(null)
 
-  /** Som-guia durante a gravação. Desligado por padrão: vaza para o microfone. */
-  const [guideAudio, setGuideAudio] = useState(false)
+  /**
+   * Sem fone é o caso comum, então é o padrão.
+   *
+   * A pergunta na tela é "você está sem fone?", e não "quer o som-guia?":
+   * a primeira qualquer um responde olhando para a própria cabeça; a segunda
+   * exige saber que o microfone capta o que sai das caixas.
+   */
+  const [semFone, setSemFone] = useState(true)
+  const guideAudio = !semFone
 
   /** Quantos personagens a cena tem. Quem sabe é a pessoa, não o algoritmo. */
   const [voiceCount, setVoiceCount] = useState(2)
@@ -1517,20 +1524,20 @@ function LocalDubStage({
               <label className="flex cursor-pointer items-start gap-2">
                 <input
                   type="checkbox"
-                  checked={guideAudio}
+                  checked={semFone}
                   data-testid="som-guia"
                   onChange={(event) => {
-                    setGuideAudio(event.target.checked)
+                    setSemFone(event.target.checked)
                   }}
                   className="mt-0.5 h-4 w-4 accent-[var(--color-accent)]"
                 />
                 <span>
                   <strong className="font-display uppercase tracking-wider text-warn">
-                    Som-guia a 10% · só com fone
+                    Marque se você está sem fone de ouvido
                   </strong>{' '}
-                  — nas caixas, o microfone capta o áudio original e ele entra na sua gravação. Sem
-                  fone, deixe desmarcado e siga pela imagem. Para preservar uma fala do vídeo, marque{' '}
-                  <strong>“Voz original”</strong> na barra.
+                  — {semFone
+                    ? 'o vídeo grava em silêncio, para o microfone não captar o áudio original e enfiá-lo na sua dublagem. Siga pela imagem e pela legenda.'
+                    : 'com fone, o áudio original toca baixinho (10%) só para você acertar a deixa. Ele não entra no resultado.'}
                 </span>
               </label>
             </p>

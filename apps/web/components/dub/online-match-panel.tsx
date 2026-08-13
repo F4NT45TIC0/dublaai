@@ -234,10 +234,6 @@ export function OnlineMatchPanel({
           </Button>
 
           {match.error ? <MatchError message={match.error} /> : null}
-
-          <Button variant="secondary" disabled={match.busy} onClick={onLeave}>
-            Voltar
-          </Button>
         </div>
       </section>
     )
