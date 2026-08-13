@@ -16,6 +16,7 @@
     "@dubla/shared": "workspace:*",
     "@dubla/ui": "workspace:*",
     "@huggingface/transformers": "^4.2.0",
+    "@supabase/supabase-js": "^2.112.3",
     "@vercel/blob": "^2.7.0",
     "@xstate/react": "^6.1.0",
     "next": "^16.3.0",

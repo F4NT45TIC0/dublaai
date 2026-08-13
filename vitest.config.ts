@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
@@ -40,6 +41,12 @@ export default defineConfig({
         // O app usa `jsx: preserve` para o compilador do Next. Nos testes,
         // Vite precisa transformar componentes TSX importados diretamente.
         oxc: { jsx: { runtime: 'automatic' } },
+        // O `@/` do tsconfig do app. Sem ele, um import de valor por alias
+        // quebra aqui e passa no build — os que existiam antes eram `import
+        // type`, apagados na compilação, e por isso ninguém notou.
+        resolve: {
+          alias: { '@': resolve(import.meta.dirname, 'apps/web') },
+        },
         test: {
           name: 'web',
           root: './apps/web',
