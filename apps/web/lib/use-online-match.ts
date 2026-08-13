@@ -10,12 +10,14 @@ import {
   localPlayerId,
   markPlayerReadyRemote,
   MATCH_POLL_MS,
+  markPresenceRemote as marcarPresencaRemote,
   pullMatchVideo,
   reclaimDisconnectedPlayerRemote,
   sendTake,
   shareMatchVideo,
   type MatchUploadAccess,
 } from '@/lib/online-match-client'
+import { assinarSala } from '@/lib/supabase-match'
 import { downloadRemoteVideo } from '@/lib/remote-video'
 import {
   currentPlayer,
@@ -123,37 +125,48 @@ export function useOnlineMatch(enabled = true): OnlineMatch {
   const code = state?.code ?? null
   const complete = state ? isMatchComplete(state) : false
 
-  // Enquanto a cena não fecha, o aparelho parado precisa saber quando chega a
-  // vez dele. Depois de completa, continuar consultando seria só gasto.
   const stateRef = useRef<MatchState | null>(null)
   stateRef.current = state
+
+  /**
+   * O estado chega por aviso, não por pergunta.
+   *
+   * Era um laço relendo a sala a cada dois segundos, e é daí que vinham as
+   * falhas que apareciam como "meu amigo não consegue entrar": a leitura podia
+   * devolver uma versão antiga, e a vez do outro só aparecia na volta seguinte.
+   * Agora o banco avisa quando algo muda.
+   */
   useEffect(() => {
     if (!enabled || !code || complete) return
-    const controller = new AbortController()
+    return assinarSala(code, setState)
+  }, [code, complete, enabled])
 
-    // Laço aberto com saída explícita: a conferência de cancelamento vem
-    // DEPOIS da espera, que é justamente onde o efeito costuma ser desmontado.
-    // Testar antes, no cabeçalho do laço, faria o compilador considerar a
-    // conferência de baixo redundante — e ela não é.
-    const tick = async () => {
+  /**
+   * Batimento de presença.
+   *
+   * Separado do estado de propósito: isto não pergunta nada, só renova o
+   * "estou aqui" para o outro lado saber que a sala não foi abandonada. Se
+   * fosse junto da leitura, sair do ar deixaria de ser detectável.
+   */
+  useEffect(() => {
+    if (!enabled || !code || complete || playerId === '') return
+    const alive = new AbortController()
+
+    const bater = async () => {
       for (;;) {
         await new Promise((resolve) => setTimeout(resolve, MATCH_POLL_MS))
-        if (controller.signal.aborted) return
+        if (alive.signal.aborted) return
         try {
-          const fresh = await fetchMatch(code, controller.signal, playerId)
-          // Presença também depende do relógio. Re-renderizar a cada heartbeat
-          // faz a outra ponta pausar assim que alguém fecha a página.
-          setState(fresh)
+          await marcarPresencaRemote(code, playerId)
         } catch {
-          // Queda de rede momentânea não derruba a partida — a próxima volta
-          // resolve. Cancelamento cai aqui também e sai no teste do topo.
+          // Falha momentânea não derruba a sala: o próximo batimento resolve.
         }
       }
     }
-    void tick()
+    void bater()
 
     return () => {
-      controller.abort()
+      alive.abort()
     }
   }, [code, complete, enabled, playerId])
 

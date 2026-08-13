@@ -1,36 +1,50 @@
 'use client'
 
-import { upload } from '@vercel/blob/client'
+import { createMatchCode, normalizeMatchCode } from '@/lib/match-code'
+import { MAX_TAKE_BYTES } from '@/lib/online-match-media'
 import type { MatchSegment, MatchState } from '@/lib/online-match'
 import {
-  MAX_TAKE_BYTES,
-  takeAudioKey,
-  takeBlobPathname,
-  type MatchTakeUploadAccess,
-} from './online-match-media'
+  abrirPartida,
+  baixarVideoDaSala,
+  criarPartida,
+  entrarNaPartida,
+  enviarVideoDaSala,
+  guardarTomada,
+  marcarPresenca,
+  sairDaPartida,
+} from '@/lib/supabase-match'
 
-export type { MatchTakeUploadAccess } from './online-match-media'
+import type { MatchTakeUploadAccess } from './online-match-media'
 
+export type { MatchTakeUploadAccess }
+
+/**
+ * Cliente da partida.
+ *
+ * As assinaturas são as mesmas de quando a sala vivia no Blob, de propósito: a
+ * tela, o hook e a regra de turno não precisaram mudar para a troca acontecer.
+ * O que mudou foi tudo por baixo — cada função aqui vira uma chamada às funções
+ * do banco, que exigem o código da sala e conferem as regras no servidor.
+ *
+ * O `uploadAccess` sobreviveu como `null` porque o hook ainda o carrega; no
+ * Supabase o upload é sempre direto ao Storage, então não há mais modo a
+ * escolher.
+ */
 export type MatchUploadAccess = 'private' | 'public'
 
 /**
- * Intervalo de consulta do estado da partida.
+ * Intervalo do batimento de presença.
  *
- * É polling, e não WebSocket, por uma razão concreta: funções serverless não
- * mantêm conexão aberta, então um socket exigiria um serviço à parte só para
- * isso. Num jogo de turnos, esperar até 2 s para saber que chegou a sua vez é
- * imperceptível ao lado de gravar uma fala.
+ * Não é mais releitura: o estado chega por Realtime. Isto aqui só renova o
+ * "estou aqui" do jogador, para o outro lado saber que a sala não foi
+ * abandonada.
  */
-export const MATCH_POLL_MS = 2_000
+export const MATCH_POLL_MS = 4_000
 
-async function readError(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { error?: unknown }
-    if (typeof body.error === 'string') return body.error
-  } catch {
-    // Resposta sem JSON (proxy, timeout de borda) cai na mensagem genérica.
-  }
-  return 'Não conseguimos falar com a partida agora.'
+function exigirCodigo(code: string): string {
+  const normalizado = normalizeMatchCode(code)
+  if (!normalizado) throw new Error('Código de partida inválido.')
+  return normalizado
 }
 
 export async function createMatch(input: {
@@ -42,85 +56,88 @@ export async function createMatch(input: {
   characterNames?: readonly string[]
   videoUrl?: string
 }): Promise<{ code: string; state: MatchState; uploadAccess: MatchUploadAccess | null }> {
-  const response = await fetch('/api/partidas', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+  // O código nasce no navegador e vai como argumento: assim ele é o mesmo que
+  // a pessoa vê na tela e o mesmo que o banco guarda, sem uma segunda volta.
+  const formatado = createMatchCode()
+  const codigo = exigirCodigo(formatado)
+
+  const personagens =
+    input.characterNames?.length === 2
+      ? input.characterNames
+      : ['Voz 1', 'Voz 2']
+
+  const state = await criarPartida({
+    codigo,
+    hostId: input.hostId,
+    videoId: input.videoId,
+    videoName: input.videoName,
+    durationMs: input.durationMs,
+    segmentos: input.segments,
+    personagens,
+    ...(input.videoUrl === undefined ? {} : { videoUrl: input.videoUrl }),
   })
-  if (!response.ok) throw new Error(await readError(response))
-  return (await response.json()) as {
-    code: string
-    state: MatchState
-    uploadAccess: MatchUploadAccess | null
-  }
+
+  return { code: formatado, state, uploadAccess: null }
 }
 
+/**
+ * Lê a sala.
+ *
+ * Continua existindo para a restauração após um refresh e para o primeiro
+ * carregamento; o acompanhamento contínuo é do Realtime. `preparing` marca o
+ * aparelho como não pronto — um refresh perde o vídeo e a análise locais, então
+ * ele não pode continuar no rodízio como se nada tivesse acontecido.
+ */
 export async function fetchMatch(
   code: string,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
   playerId?: string,
   preparing = false,
 ): Promise<MatchState> {
-  const params = new URLSearchParams()
-  if (playerId) params.set('playerId', playerId)
-  if (preparing) params.set('preparing', '1')
-  const query = params.size > 0 ? `?${params.toString()}` : ''
-  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}${query}`, {
-    cache: 'no-store',
-    ...(signal ? { signal } : {}),
-  })
-  if (!response.ok) throw new Error(await readError(response))
-  return ((await response.json()) as { state: MatchState }).state
+  const codigo = exigirCodigo(code)
+  if (playerId) {
+    return await marcarPresenca(codigo, playerId, preparing ? false : undefined)
+  }
+  const estado = await abrirPartida(codigo)
+  if (!estado) throw new Error('Partida não encontrada.')
+  return estado
 }
 
-/** Libera a vaga; `keepalive` deixa o clique concluir mesmo se a rota mudar logo depois. */
 export async function leaveMatchRemote(code: string, playerId: string): Promise<void> {
-  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playerId }),
-    keepalive: true,
-  })
-  if (!response.ok) throw new Error(await readError(response))
+  await sairDaPartida(exigirCodigo(code), playerId)
 }
 
-/** Libera uma vaga somente depois que o servidor confirma o timeout dela. */
+/**
+ * Libera a vaga de quem caiu.
+ *
+ * A conferência de tempo mora no domínio (`reclaimDisconnectedPlayer`), e a
+ * chamada em si é a mesma saída de sempre — o banco não distingue quem pede,
+ * então quem decide se já deu o prazo é a tela, com o estado que o Realtime
+ * acabou de entregar.
+ */
 export async function reclaimDisconnectedPlayerRemote(
   code: string,
-  requesterId: string,
+  _requesterId: string,
   playerId: string,
 ): Promise<MatchState> {
-  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requesterId, playerId }),
-  })
-  if (!response.ok) throw new Error(await readError(response))
-  return ((await response.json()) as { state: MatchState }).state
+  return await sairDaPartida(exigirCodigo(code), playerId)
 }
 
 export async function joinMatchRemote(
   code: string,
   input: { playerId: string; name: string; characterId: string; videoId: string },
 ): Promise<MatchState> {
-  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  })
-  if (!response.ok) throw new Error(await readError(response))
-  return ((await response.json()) as { state: MatchState }).state
+  return await entrarNaPartida(exigirCodigo(code), input.playerId, input.name, input.characterId)
+}
+
+/** Renova o "estou aqui" sem mexer na prontidão. */
+export async function markPresenceRemote(code: string, playerId: string): Promise<MatchState> {
+  return await marcarPresenca(exigirCodigo(code), playerId)
 }
 
 /** Confirma que este aparelho terminou de preparar a cena da partida. */
 export async function markPlayerReadyRemote(code: string, playerId: string): Promise<MatchState> {
-  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playerId, ready: true }),
-  })
-  if (!response.ok) throw new Error(await readError(response))
-  return ((await response.json()) as { state: MatchState }).state
+  return await marcarPresenca(exigirCodigo(code), playerId, true)
 }
 
 export async function sendTake(
@@ -132,121 +149,50 @@ export async function sendTake(
     sampleRate: number
     wav: Blob
   },
-  access: MatchTakeUploadAccess | null = null,
+  // Mantido porque o hook e os testes ainda o passam. No Supabase o upload é
+  // sempre direto ao Storage, então não há modo a escolher.
+  _access: MatchTakeUploadAccess | null = null,
 ): Promise<MatchState> {
   if (input.wav.size === 0 || input.wav.size > MAX_TAKE_BYTES) {
     throw new Error('Arquivo de áudio fora do tamanho aceito.')
   }
-
-  if (access === 'private') {
-    const mediaStartOffsetMs = Math.round(input.mediaStartOffsetMs)
-    const audioKey = takeAudioKey(input.segmentId, crypto.randomUUID())
-    const pathname = audioKey ? takeBlobPathname(code, audioKey) : null
-    if (!pathname) throw new Error('Não conseguimos preparar o destino desta tomada.')
-
-    const stored = await upload(pathname, input.wav, {
-      access,
-      handleUploadUrl: `/api/partidas/${encodeURIComponent(code)}/tomadas/upload`,
-      clientPayload: JSON.stringify({
-        segmentId: input.segmentId,
-        playerId: input.playerId,
-        mediaStartOffsetMs,
-        sampleRate: input.sampleRate,
-      }),
-      contentType: 'audio/wav',
-    })
-
-    const response = await fetch(`/api/partidas/${encodeURIComponent(code)}/tomadas`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        segmentId: input.segmentId,
-        playerId: input.playerId,
-        mediaStartOffsetMs,
-        sampleRate: input.sampleRate,
-        pathname: stored.pathname,
-      }),
-    })
-    if (!response.ok) throw new Error(await readError(response))
-    return ((await response.json()) as { state: MatchState }).state
-  }
-
-  // O store `file`, usado em desenvolvimento e no E2E, não emite token do
-  // Blob. O fixture pequeno continua atravessando a rota multipart local.
-  const form = new FormData()
-  form.set('segmentId', input.segmentId)
-  form.set('playerId', input.playerId)
-  form.set('mediaStartOffsetMs', String(Math.round(input.mediaStartOffsetMs)))
-  form.set('sampleRate', String(input.sampleRate))
-  form.set('audio', input.wav, 'tomada.wav')
-
-  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}/tomadas`, {
-    method: 'POST',
-    body: form,
+  return await guardarTomada({
+    codigo: exigirCodigo(code),
+    trechoId: input.segmentId,
+    jogadorId: input.playerId,
+    wav: input.wav,
+    mediaStartOffsetMs: input.mediaStartOffsetMs,
+    sampleRate: input.sampleRate,
   })
-  if (!response.ok) throw new Error(await readError(response))
-  return ((await response.json()) as { state: MatchState }).state
 }
 
-/** Envia o vídeo da cena para a partida. Só o anfitrião faz isso, uma vez. */
 export async function shareMatchVideo(
   code: string,
   playerId: string,
   video: Blob,
-  fileName: string,
-  access: MatchUploadAccess | null,
+  _fileName: string,
+  _access: MatchUploadAccess | null,
   onProgress?: (percentage: number) => void,
 ): Promise<MatchState> {
-  // Em produção o arquivo vai direto do navegador ao Blob. Passá-lo pela
-  // Function quebraria acima de 4,5 MB, muito antes do limite de vídeo do app.
-  if (access) {
-    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-160) || 'cena.mp4'
-    const pathname = `partidas/${code}/video/${crypto.randomUUID()}-${safeName}`
-    const stored = await upload(pathname, video, {
-      access,
-      handleUploadUrl: `/api/partidas/${encodeURIComponent(code)}/video/upload`,
-      clientPayload: JSON.stringify({ playerId }),
-      ...(video.type ? { contentType: video.type } : {}),
-      // A própria SDK divide, paraleliza e repete apenas as partes que falham.
-      multipart: video.size > 100 * 1024 * 1024,
-      ...(onProgress
-        ? {
-            onUploadProgress: ({ percentage }) => {
-              onProgress(percentage)
-            },
-          }
-        : {}),
-    })
-
-    const response = await fetch(`/api/partidas/${encodeURIComponent(code)}/video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId, pathname: stored.pathname }),
-    })
-    if (!response.ok) throw new Error(await readError(response))
-    return ((await response.json()) as { state: MatchState }).state
+  // O SDK do Storage não expõe progresso por byte. Marcar início e fim mantém a
+  // barra honesta: ela mostra que algo está acontecendo, sem inventar uma
+  // porcentagem que não é medida.
+  onProgress?.(0)
+  try {
+    return await enviarVideoDaSala(exigirCodigo(code), playerId, video)
+  } finally {
+    onProgress?.(100)
   }
-
-  // Desenvolvimento e E2E usam disco local e não possuem um Blob para upload
-  // direto. Neles a rota antiga continua sendo a representação mais fiel.
-  const form = new FormData()
-  form.set('playerId', playerId)
-  form.set('video', video, fileName)
-
-  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}/video`, {
-    method: 'POST',
-    body: form,
-  })
-  if (!response.ok) throw new Error(await readError(response))
-  return ((await response.json()) as { state: MatchState }).state
 }
 
-/** Baixa o vídeo que o anfitrião guardou, para quem entrou depois. */
 export async function pullMatchVideo(code: string, fileName: string): Promise<File> {
-  const response = await fetch(`/api/partidas/${encodeURIComponent(code)}/video`)
-  if (!response.ok) throw new Error(await readError(response))
-  const blob = await response.blob()
-  return new File([blob], fileName, { type: blob.type || 'video/mp4' })
+  const codigo = exigirCodigo(code)
+  const estado = await abrirPartida(codigo)
+  if (!estado) throw new Error('Partida não encontrada.')
+
+  const arquivo = await baixarVideoDaSala(estado)
+  if (!arquivo) throw new Error('Esta partida ainda não tem vídeo.')
+  return new File([arquivo], fileName, { type: arquivo.type })
 }
 
 /**

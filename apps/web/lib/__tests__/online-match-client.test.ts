@@ -1,136 +1,74 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const blobClient = vi.hoisted(() => ({
-  upload: vi.fn<
-    (
-      pathname: string,
-      body: Blob,
-      options: {
-        readonly access: string
-        readonly clientPayload: string
-        readonly contentType: string
-        readonly handleUploadUrl: string
-      },
-    ) => Promise<{ pathname: string }>
-  >(),
+/**
+ * O cliente da partida agora fala com o Supabase.
+ *
+ * O que sobra de lógica própria aqui é a porta de entrada: recusar um WAV que
+ * não deveria sair do aparelho e recusar um código malformado antes de gastar
+ * uma ida ao servidor. O resto — turno, vaga, ordem das falas — é conferido
+ * pelas funções do banco, e é lá que está testado.
+ */
+const transporte = vi.hoisted(() => ({
+  guardarTomada: vi.fn(),
+  abrirPartida: vi.fn(),
+  criarPartida: vi.fn(),
+  entrarNaPartida: vi.fn(),
+  marcarPresenca: vi.fn(),
+  sairDaPartida: vi.fn(),
+  enviarVideoDaSala: vi.fn(),
+  baixarVideoDaSala: vi.fn(),
 }))
-vi.mock('@vercel/blob/client', () => ({ upload: blobClient.upload }))
+vi.mock('@/lib/supabase-match', () => transporte)
 
 import { sendTake } from '../online-match-client'
 
-const CODE = 'ABC123DEF456'
+const CODE = 'K7M29XQP4TVB'
 const WAV = new Blob([new Uint8Array([82, 73, 70, 70])], { type: 'audio/wav' })
 
-beforeEach(() => {
-  blobClient.upload.mockReset()
+const tomada = (wav: Blob) => ({
+  segmentId: 'fala-1',
+  playerId: 'jogador-1',
+  mediaStartOffsetMs: -700,
+  sampleRate: 48_000,
+  wav,
 })
 
-afterEach(() => {
-  vi.unstubAllGlobals()
+beforeEach(() => {
+  transporte.guardarTomada.mockReset()
+  transporte.guardarTomada.mockResolvedValue({ code: CODE })
 })
 
 describe('sendTake', () => {
-  it('envia o WAV direto ao Blob privado e confirma somente o pathname', async () => {
-    blobClient.upload.mockImplementation((pathname: string) => Promise.resolve({ pathname }))
-    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
-      Promise.resolve(Response.json({ state: { code: CODE, players: [], takes: {} } })),
-    )
-    vi.stubGlobal('fetch', fetchMock)
+  it('entrega a tomada ao transporte com o trecho e o relógio dela', async () => {
+    await sendTake(CODE, tomada(WAV))
 
-    const result = await sendTake(
-      CODE,
-      {
-        segmentId: 'fala-1',
-        playerId: 'jogador-1',
-        mediaStartOffsetMs: -120.4,
-        sampleRate: 48_000,
-        wav: WAV,
-      },
-      'private',
-    )
-
-    expect(result.code).toBe(CODE)
-    const uploadCall = blobClient.upload.mock.calls[0]
-    expect(uploadCall).toBeDefined()
-    if (!uploadCall) return
-    expect(uploadCall[0]).toMatch(/^partidas\/ABC123DEF456\/fala-1-[a-zA-Z0-9_-]+\.wav$/)
-    expect(uploadCall[1]).toBe(WAV)
-    expect(uploadCall[2]).toMatchObject({
-      access: 'private',
-      contentType: 'audio/wav',
-      handleUploadUrl: `/api/partidas/${CODE}/tomadas/upload`,
-    })
-    expect(JSON.parse(uploadCall[2].clientPayload)).toEqual({
-      segmentId: 'fala-1',
-      playerId: 'jogador-1',
-      mediaStartOffsetMs: -120,
+    expect(transporte.guardarTomada).toHaveBeenCalledWith({
+      codigo: CODE,
+      trechoId: 'fala-1',
+      jogadorId: 'jogador-1',
+      wav: WAV,
+      mediaStartOffsetMs: -700,
       sampleRate: 48_000,
-    })
-
-    const confirmCall = fetchMock.mock.calls[0]
-    expect(confirmCall).toBeDefined()
-    if (!confirmCall) return
-    expect(confirmCall[0]).toBe(`/api/partidas/${CODE}/tomadas`)
-    expect(confirmCall[1]).toMatchObject({
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    })
-    const confirmationBody = confirmCall[1]?.body
-    expect(typeof confirmationBody).toBe('string')
-    if (typeof confirmationBody !== 'string') return
-    expect(JSON.parse(confirmationBody)).toMatchObject({
-      segmentId: 'fala-1',
-      playerId: 'jogador-1',
-      mediaStartOffsetMs: -120,
-      sampleRate: 48_000,
-      pathname: uploadCall[0],
     })
   })
 
-  it('mantém multipart no store de arquivo usado em desenvolvimento', async () => {
-    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
-      Promise.resolve(Response.json({ state: { code: CODE, players: [], takes: {} } })),
+  it('aceita o código como a pessoa recebeu, com hífen', async () => {
+    await sendTake('K7M2-9XQP-4TVB', tomada(WAV))
+    expect(transporte.guardarTomada).toHaveBeenCalledWith(
+      expect.objectContaining({ codigo: CODE }),
     )
-    vi.stubGlobal('fetch', fetchMock)
-
-    await sendTake(
-      CODE,
-      {
-        segmentId: 'fala-1',
-        playerId: 'jogador-1',
-        mediaStartOffsetMs: 0,
-        sampleRate: 48_000,
-        wav: WAV,
-      },
-      'file',
-    )
-
-    expect(blobClient.upload).not.toHaveBeenCalled()
-    const call = fetchMock.mock.calls[0]
-    expect(call).toBeDefined()
-    if (!call) return
-    expect(call[1]?.body).toBeInstanceOf(FormData)
-    const form = call[1]?.body
-    if (!(form instanceof FormData)) return
-    expect(form.get('segmentId')).toBe('fala-1')
-    expect(form.get('audio')).toBeInstanceOf(Blob)
   })
 
-  it('recusa arquivo vazio antes de iniciar qualquer upload', async () => {
-    vi.stubGlobal('fetch', vi.fn())
+  it('recusa gravação vazia sem tocar na rede', async () => {
     await expect(
-      sendTake(
-        CODE,
-        {
-          segmentId: 'fala-1',
-          playerId: 'jogador-1',
-          mediaStartOffsetMs: 0,
-          sampleRate: 48_000,
-          wav: new Blob([], { type: 'audio/wav' }),
-        },
-        'private',
-      ),
+      sendTake(CODE, tomada(new Blob([], { type: 'audio/wav' }))),
     ).rejects.toThrow(/tamanho aceito/i)
-    expect(blobClient.upload).not.toHaveBeenCalled()
+
+    expect(transporte.guardarTomada).not.toHaveBeenCalled()
+  })
+
+  it('recusa código malformado antes de gastar uma ida ao servidor', async () => {
+    await expect(sendTake('ABC', tomada(WAV))).rejects.toThrow(/código/i)
+    expect(transporte.guardarTomada).not.toHaveBeenCalled()
   })
 })
