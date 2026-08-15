@@ -307,20 +307,28 @@ export async function baixarVideoDaSala(estado: MatchState): Promise<File | null
 /**
  * Avisa quando a sala muda.
  *
- * É isto que substitui o laço de releitura: o outro aparelho é notificado, em
- * vez de descobrir na próxima volta. O `postgres_changes` acompanha as três
- * tabelas porque entrar na sala, ficar pronto e gravar uma fala mexem em
- * tabelas diferentes — e todas mudam o que a tela precisa mostrar.
+ * É broadcast, e não `postgres_changes`, por um motivo que custou caro
+ * descobrir: `postgres_changes` respeita RLS, e as tabelas da partida têm RLS
+ * ligado sem política nenhuma — para o código da sala ser a única credencial.
+ * As duas coisas juntas faziam o Realtime filtrar todos os eventos, e a sala
+ * ficava congelada sem erro nenhum aparecer.
+ *
+ * O canal é `partida:<codigo>`. Quem não conhece o código não monta o nome do
+ * canal, então a mesma regra do resto do sistema vale também no transporte.
+ *
+ * O evento traz só o código; o estado vem de `abrir_partida`, que confere
+ * tudo. Mandar o estado no payload duplicaria a regra em dois lugares.
  */
 export function assinarSala(codigo: string, aoMudar: (estado: MatchState) => void): () => void {
   const cliente = supabase()
+
   const recarregar = () => {
     const puxar = async () => {
       try {
         const estado = await abrirPartida(codigo)
         if (estado) aoMudar(estado)
       } catch {
-        // Falha momentânea não derruba a sala: o próximo evento recarrega.
+        // Falha momentânea não derruba a sala: o próximo aviso recarrega.
       }
     }
     void puxar()
@@ -328,22 +336,12 @@ export function assinarSala(codigo: string, aoMudar: (estado: MatchState) => voi
 
   const canal = cliente
     .channel(`partida:${codigo}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'partidas', filter: `codigo=eq.${codigo}` },
-      recarregar,
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'partida_jogadores', filter: `codigo=eq.${codigo}` },
-      recarregar,
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'partida_tomadas', filter: `codigo=eq.${codigo}` },
-      recarregar,
-    )
-    .subscribe()
+    .on('broadcast', { event: 'mudou' }, recarregar)
+    .subscribe((status: string) => {
+      // Ao (re)conectar, a sala pode ter mudado enquanto o socket estava fora.
+      // Sem esta leitura, uma queda de rede deixaria a tela parada no passado.
+      if (status === 'SUBSCRIBED') recarregar()
+    })
 
   return () => {
     void cliente.removeChannel(canal)
